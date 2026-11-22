@@ -27,16 +27,6 @@ AutoCare is a privacy-first, installable Progressive Web App for keeping track o
 
 Efficiency is calculated only between **full-tank fill-ups**. Partial fill-ups are accumulated into the next full one. Distance and amount are stored in metric base units and converted for display, so changing units never corrupts history.
 
-### Run locally
-
-```bash
-git clone https://github.com/Wolver-Fik/AutoCare.git
-cd AutoCare
-python -m http.server 8000
-```
-
-Open <http://localhost:8000/>. A local server is needed because service workers are not registered from `file://`.
-
 ### Deploy
 
 The repository is ready for GitHub Pages: all paths are relative (`./`), `sw.js` is at the root, and `manifest.webmanifest` declares `start_url: "./"`. Publish from the `main` branch at the root folder, then visit **[https://wolver-fik.github.io/AutoCare/](https://wolver-fik.github.io/AutoCare/)**.
@@ -79,16 +69,6 @@ AutoCare es una PWA instalable y centrada en la privacidad para llevar el contro
 ### Cálculo del rendimiento
 
 El rendimiento se calcula solo entre **cargas con tanque lleno**. Las cargas parciales se acumulan en la siguiente carga llena. Distancia y cantidad se guardan en unidades base métricas y se convierten al mostrar, así que cambiar de unidades nunca corrompe el historial.
-
-### Ejecutar en local
-
-```bash
-git clone https://github.com/Wolver-Fik/AutoCare.git
-cd AutoCare
-python -m http.server 8000
-```
-
-Abre <http://localhost:8000/>. Necesitas un servidor local porque los service workers no se registran desde `file://`.
 
 ### Despliegue
 
