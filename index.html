@@ -70,6 +70,9 @@
     <button type="button" role="tab" id="tab-analisis" aria-controls="view-analisis" aria-selected="false" data-tab="analisis" tabindex="-1"><svg class="ico"><use href="#i-sliders"/></svg><span data-i18n="tabAnalysis">Analysis &amp; History</span></button>
   </nav>
 
+  <!-- Cada panel contiene solo sus propias tarjetas. #vehicleCard, #hero, #stats
+       y #alerts pertenecen a #view-tablero: nunca deben salir de este section,
+       porque es el panel completo el que se oculta al cambiar de pestaña. -->
   <main>
     <section class="view" id="view-tablero" role="tabpanel" aria-labelledby="tab-tablero">
       <section class="card a-vehicle" id="vehicleCard" data-i18n-aria="ariaVehicle" aria-label="Vehicle card"></section>

@@ -596,7 +596,15 @@
       b.setAttribute('aria-selected',String(on));
       b.tabIndex=on?0:-1;
     });
-    Object.keys(VIEWS).forEach(k=>{document.getElementById(VIEWS[k]).hidden=k!==name});
+    /* `hidden` es la única fuente de verdad y se aplica al panel COMPLETO: así la
+       ficha del vehículo y las alertas desaparecen junto con el Tablero. Se limpia
+       cualquier display inline residual que pudiera "resucitar" un panel oculto. */
+    Object.keys(VIEWS).forEach(k=>{
+      const panel=document.getElementById(VIEWS[k]),on=k===name;
+      panel.style.removeProperty('display');
+      panel.hidden=!on;
+      panel.setAttribute('aria-hidden',String(!on));
+    });
     try{localStorage.setItem(store.KEY+'-tab',name)}catch(e){}
     if(focus){const b=document.querySelector('.mainnav [data-tab="'+name+'"]');if(b)b.focus()}
     if(scroll!==false)window.scrollTo({top:0,behavior:'smooth'});

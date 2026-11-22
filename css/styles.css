@@ -276,32 +276,42 @@ form{display:grid;gap:14px}
 .foot{margin-top:18px;font-size:12.5px;color:var(--fg3);text-align:center}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 
-/* ---------- Móvil (<768px): una sola columna, sin superposiciones ---------- */
-@media(max-width:767px){
-  /* Todas las vistas y sus tarjetas principales apiladas a ancho completo */
+/* ---------- Móvil (<=768px): flujo vertical puro, cero superposiciones ---------- */
+@media(max-width:768px){
+  /* 1) Un panel con hidden NUNCA se muestra. Antes, #view-tablero (ID + !important)
+     ganaba sobre [hidden] (0,2,0) y el Tablero seguía visible en las otras pestañas. */
+  #view-tablero[hidden],
+  #view-mantenimiento[hidden],
+  #view-analisis[hidden],
+  .view[hidden],
+  [hidden]{display:none!important}
+
+  /* 2) Paneles, secciones y tarjetas: bloques normales en flujo vertical.
+     Sin display forzado por ID, sin !important y sin anchos fijos. */
   .view,
-  #view-tablero,
-  #vehicleCard,
-  #vehicleCard>.veh,
-  #hero,
-  #stats,
-  #stats.tiles,
-  #alerts,
-  #alerts>.card,
-  #alerts .al-list,
+  .view>*,
+  .a-vehicle>.veh,
+  .a-hero,
+  .a-stats,
+  .a-alerts,
+  .a-alerts>.card,
+  .a-alerts .al-list,
   .a-actions,
   .actions{
-    display:grid!important;
-    grid-template-columns:1fr!important;
-    grid-auto-rows:auto!important;
-    height:auto!important;
+    display:flex;
+    flex-direction:column;
+    position:relative;
+    float:none;
     width:100%;
     max-width:100%;
     min-width:0;
+    height:auto;
+    max-height:none;
+    margin:0;
     gap:16px
   }
-  .view{gap:16px}
-  #alerts .al-list{gap:10px}
+  .view{gap:18px}
+  .a-alerts .al-list{gap:10px}
   .view>*,
   #vehicleCard .veh-visual,
   #vehicleCard .veh-body,
@@ -310,25 +320,47 @@ form{display:grid;gap:14px}
   #alerts>*,
   .actions>*{width:100%;max-width:100%;min-width:0}
 
-  /* Contenido interno confinado: nada puede desbordar su tarjeta */
+  /* 3) Ficha del vehículo y bloque de alertas: sin absolute, sin márgenes
+     negativos y sin anchos fijos. Ninguna alerta puede montarse sobre el auto. */
+  #vehicleCard,
+  #vehicleCard .veh,
   #vehicleCard .veh-visual,
   #vehicleCard .veh-body,
-  #hero>*,
-  .tile,
-  .al,
-  #alerts>.card{min-width:0;max-width:100%;overflow:hidden}
-  /* Los únicos elementos absolute son decorativos y quedan dentro de su contenedor */
   #vehicleCard .veh-stage,
   #vehicleCard .veh-cutout,
-  .al{position:relative;overflow:hidden}
+  #vehicleCard .veh-cutout .veh-photo,
+  #vehicleCard .veh-bp-img,
+  #alerts,
+  #alerts>.card,
+  #alerts .al-list,
+  #alerts .al{
+    position:relative;
+    top:auto;right:auto;bottom:auto;left:auto;
+    float:none;
+    margin:0;
+    width:100%;
+    max-width:100%;
+    min-width:0
+  }
+  #vehicleCard .veh-stage,
+  #alerts .al{overflow:hidden}
   #vehicleCard .veh-stage svg,
   #vehicleCard .veh-photo,
-  #vehicleCard .veh-bp-img{max-width:100%;max-height:200px}
+  #vehicleCard .veh-bp-img{max-width:100%;max-height:200px;height:auto}
+  #vehicleCard .veh-visual{transform:none} /* el tilt 3D solo se usa en escritorio */
+
+  /* 4) Separación y confinamiento: odómetro, alertas, tiles y gráficos */
+  .tile,
+  #alerts>.card{min-width:0;max-width:100%;overflow:hidden}
   .tile .tv{white-space:normal;overflow-wrap:anywhere}
   .al{flex-wrap:wrap}
   .al>div{flex:1 1 120px;min-width:0;overflow-wrap:anywhere}
   .al .ico{flex:none}
   .al .btn{flex:none;margin-left:auto}
+  .hero .gauge{max-width:100%}
+  .chart,
+  .chart svg{display:block;width:100%;max-width:100%}
+  .tbl-w{max-width:100%;overflow-x:auto}
 }
 
 /* ---------- Cabecera móvil (<640px): 2 filas limpias, sin choques ---------- */
