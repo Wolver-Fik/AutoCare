@@ -31,10 +31,11 @@ button{font:inherit;color:inherit;cursor:pointer}
 .wrap{max-width:1120px;margin:0 auto}
 .top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
 .brand{display:flex;align-items:center;gap:12px;min-width:0}
-.brand .ico{width:30px;height:30px;color:var(--accent)}
+.brand>div{flex:1 1 auto;min-width:0}
+.brand .ico{width:30px;height:30px;color:var(--accent);flex:none}
 .brand h1{font:600 26px/1.05 var(--f-cond);letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .brand p{font-size:12px;color:var(--fg3);letter-spacing:.12em;text-transform:uppercase}
-.top-r{display:flex;align-items:center;gap:8px}
+.top-r{display:flex;align-items:center;gap:8px;min-width:0}
 .sync{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--fg2);padding:5px 10px;border-radius:99px;background:var(--s1);border:1px solid var(--line)}
 .sync i{width:7px;height:7px;border-radius:50%;background:var(--fg3)}
 .sync.synced i{background:var(--ok)} .sync.pending i{background:var(--warn)} .sync.error i{background:var(--bad)}
@@ -274,3 +275,75 @@ form{display:grid;gap:14px}
 .toast.on{opacity:1;transform:translate(-50%,0)}
 .foot{margin-top:18px;font-size:12.5px;color:var(--fg3);text-align:center}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+
+/* ---------- Móvil (<768px): una sola columna, sin superposiciones ---------- */
+@media(max-width:767px){
+  /* Todas las vistas y sus tarjetas principales apiladas a ancho completo */
+  .view,
+  #view-tablero,
+  #vehicleCard,
+  #vehicleCard>.veh,
+  #hero,
+  #stats,
+  #stats.tiles,
+  #alerts,
+  #alerts>.card,
+  #alerts .al-list,
+  .a-actions,
+  .actions{
+    display:grid!important;
+    grid-template-columns:1fr!important;
+    grid-auto-rows:auto!important;
+    height:auto!important;
+    width:100%;
+    max-width:100%;
+    min-width:0;
+    gap:16px
+  }
+  .view{gap:16px}
+  #alerts .al-list{gap:10px}
+  .view>*,
+  #vehicleCard .veh-visual,
+  #vehicleCard .veh-body,
+  #hero>*,
+  #stats>*,
+  #alerts>*,
+  .actions>*{width:100%;max-width:100%;min-width:0}
+
+  /* Contenido interno confinado: nada puede desbordar su tarjeta */
+  #vehicleCard .veh-visual,
+  #vehicleCard .veh-body,
+  #hero>*,
+  .tile,
+  .al,
+  #alerts>.card{min-width:0;max-width:100%;overflow:hidden}
+  /* Los únicos elementos absolute son decorativos y quedan dentro de su contenedor */
+  #vehicleCard .veh-stage,
+  #vehicleCard .veh-cutout,
+  .al{position:relative;overflow:hidden}
+  #vehicleCard .veh-stage svg,
+  #vehicleCard .veh-photo,
+  #vehicleCard .veh-bp-img{max-width:100%;max-height:200px}
+  .tile .tv{white-space:normal;overflow-wrap:anywhere}
+  .al{flex-wrap:wrap}
+  .al>div{flex:1 1 120px;min-width:0;overflow-wrap:anywhere}
+  .al .ico{flex:none}
+  .al .btn{flex:none;margin-left:auto}
+}
+
+/* ---------- Cabecera móvil (<640px): 2 filas limpias, sin choques ---------- */
+@media(max-width:639px){
+  .top{display:grid;grid-template-columns:minmax(0,1fr);align-items:center;gap:10px;margin-bottom:12px}
+  /* Fila 1: logo + título con ellipsis garantizado */
+  .brand{grid-row:1;width:100%;min-width:0}
+  .brand>div{flex:1 1 auto;min-width:0;overflow:hidden}
+  .brand h1{width:100%;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .brand p{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* Fila 2: idioma + badge de dispositivo + ajustes, espaciados y sin pisar el título */
+  .top-r{grid-row:2;display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;min-width:0}
+  .lang-wrap,.lang-sel{flex:none;max-width:92px}
+  .sync{flex:1 1 140px;justify-content:center;min-width:0;width:auto;overflow:hidden}
+  .sync i{flex:none}
+  .sync b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .icon-btn{flex:none;margin-left:auto}
+}
