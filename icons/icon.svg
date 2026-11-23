@@ -1,14 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="AutoCare">
-  <rect width="512" height="512" rx="96" fill="#090D16"/>
-  <circle cx="256" cy="256" r="196" fill="none" stroke="#3B82F6" stroke-opacity=".18" stroke-width="2"/>
-  <path d="M126 292 A130 130 0 0 1 386 292" fill="none" stroke="#3B82F6" stroke-width="20" stroke-linecap="round"/>
-  <path d="M308 178 A130 130 0 0 1 386 292" fill="none" stroke="#10B981" stroke-width="20" stroke-linecap="round"/>
-  <path d="M256 292 L322 204" fill="none" stroke="#10B981" stroke-width="12" stroke-linecap="round"/>
-  <circle cx="256" cy="292" r="15" fill="#10B981"/>
-  <path d="M198 330 L228 290 H306 L340 330 Z" fill="#10B981"/>
-  <path d="M150 330 H362 A24 24 0 0 1 386 354 V374 H126 V354 A24 24 0 0 1 150 330 Z" fill="#3B82F6"/>
-  <circle cx="192" cy="376" r="24" fill="#090D16" stroke="#3B82F6" stroke-width="10"/>
-  <circle cx="320" cy="376" r="24" fill="#090D16" stroke="#3B82F6" stroke-width="10"/>
-  <circle cx="192" cy="376" r="6" fill="#10B981"/>
-  <circle cx="320" cy="376" r="6" fill="#10B981"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AutoCare">
+  <defs>
+    <linearGradient id="acMark" x1="10" y1="5" x2="54" y2="59" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F59E0B"/>
+      <stop offset="1" stop-color="#FB923C"/>
+    </linearGradient>
+    <radialGradient id="acGlow" cx="50%" cy="48%" r="56%">
+      <stop stop-color="#F59E0B" stop-opacity=".20"/>
+      <stop offset="1" stop-color="#F59E0B" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#0A0D12"/>
+  <rect x=".5" y=".5" width="63" height="63" rx="13.5" fill="none" stroke="#F59E0B" stroke-opacity=".35"/>
+  <circle cx="32" cy="32" r="29" fill="url(#acGlow)"/>
+  <path d="M32 5L54 13V30C54 43 45 53 32 59C19 53 10 43 10 30V13Z" fill="url(#acMark)" fill-opacity=".12" stroke="url(#acMark)" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M18 39L21 30Q22.5 27 26 27H38Q41.5 27 43 30L46 39Z" fill="url(#acMark)"/>
+  <path d="M19 39h26" stroke="url(#acMark)" stroke-width="2.4" stroke-linecap="round"/>
+  <circle cx="23" cy="41" r="3.2" fill="#0A0D12" stroke="url(#acMark)" stroke-width="2"/>
+  <circle cx="41" cy="41" r="3.2" fill="#0A0D12" stroke="url(#acMark)" stroke-width="2"/>
+  <path d="M32 21v6m0 0h4" stroke="url(#acMark)" stroke-width="2.2" stroke-linecap="round"/>
 </svg>

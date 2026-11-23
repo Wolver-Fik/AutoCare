@@ -43,8 +43,22 @@
 <div class="wrap">
   <header class="top">
     <div class="brand">
-      <svg class="ico"><use href="#i-car"/></svg>
-      <div><h1 id="vName">My car</h1><p data-i18n="appSubtitle">Control dashboard</p></div>
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs><linearGradient id="acMark" x1="10" y1="5" x2="54" y2="59" gradientUnits="userSpaceOnUse"><stop stop-color="#F59E0B"/><stop offset="1" stop-color="#FB923C"/></linearGradient></defs>
+          <path d="M32 5L54 13V30C54 43 45 53 32 59C19 53 10 43 10 30V13Z" fill="url(#acMark)" fill-opacity=".12" stroke="url(#acMark)" stroke-width="4" stroke-linejoin="round"/>
+          <path d="M18 39L21 30Q22.5 27 26 27H38Q41.5 27 43 30L46 39Z" fill="url(#acMark)"/>
+          <path d="M19 39h26" stroke="url(#acMark)" stroke-width="2.4" stroke-linecap="round"/>
+          <circle cx="23" cy="41" r="3.2" fill="#0A0D12" stroke="url(#acMark)" stroke-width="2"/>
+          <circle cx="41" cy="41" r="3.2" fill="#0A0D12" stroke="url(#acMark)" stroke-width="2"/>
+          <path d="M32 21v6m0 0h4" stroke="url(#acMark)" stroke-width="2.2" stroke-linecap="round"/>
+        </svg>
+      </span>
+      <div class="brand-copy">
+        <h1 class="wordmark">Auto<strong>Care</strong></h1>
+        <p id="vName" class="vehicle-name">My car</p>
+        <p class="app-subtitle" data-i18n="appSubtitle">Control dashboard</p>
+      </div>
     </div>
     <div class="top-r">
       <label class="lang-wrap">

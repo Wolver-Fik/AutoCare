@@ -1,7 +1,7 @@
 /* AutoCare · Service Worker · caché para uso sin conexión / offline cache */
 'use strict';
 
-const CACHE = 'autocare-v1.0.9';
+const CACHE = 'autocare-v1.1.0';
 /* CDNs permitidos para el módulo y los pesos WASM/ONNX del recorte de fondo */
 const AI_CDN = /^(?:.+\.)?(?:esm\.sh|jsdelivr\.net|imgly\.com|staticimgly\.com)$/i;
 const CORE = [
