@@ -1,10 +1,8 @@
 # AutoCare
 
-**Multilingual vehicle dashboard · Tablero del auto multilingüe**
+[![GitHub Pages](https://img.shields.io/badge/GitHub%20Pages-AutoCare-6366F1)](https://wolver-fik.github.io/AutoCare/)
 
-[![License: PolyForm Noncommercial License 1.0.0](https://img.shields.io/badge/license-PolyForm Noncommercial License 1.0.0-blue.svg)](LICENSE)
-
-**Live demo / Demo en vivo:** **[https://wolver-fik.github.io/AutoCare/](https://wolver-fik.github.io/AutoCare/)**
+[English](#english) · [Español](#español)
 
 ---
 
@@ -47,9 +45,11 @@ sw.js                 offline cache
 
 ### License
 
-[PolyForm Noncommercial License 1.0.0](LICENSE) © 2026 Wolver-Fik.
+[PolyForm Noncommercial License 1.0.0](./LICENSE) © 2026 Wolver-Fik.
 
 ---
+
+<a id="español"></a>
 
 ## Español
 
@@ -76,4 +76,4 @@ El repositorio está listo para GitHub Pages: todas las rutas son relativas (`./
 
 ### Licencia
 
-[PolyForm Noncommercial License 1.0.0](LICENSE) © 2026 Wolver-Fik.
+[PolyForm Noncommercial License 1.0.0](./LICENSE) © 2026 Wolver-Fik.
