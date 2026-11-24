@@ -1,14 +1,10 @@
-/* ---------- Ajustes base (se mantienen antes del tema oscuro) ---------- */
-:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-html{scroll-padding-top:env(safe-area-inset-top,0px)}
-body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}
-img{max-width:100%}
-[hidden]:not([hidden=until-found i]){display:none!important}
-
-/* ---------- Tema y layout ---------- */
+/* ---------- Tema oscuro: base única, sin fallback claro intermedio ---------- */
 :root{
   color-scheme:dark;
-  --bg:#0a0d12; --s1:#10151c; --s2:#161d27; --s3:#1e2733;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+  --bg:#0B0D12; --s1:#10151c; --s2:#161d27; --s3:#1e2733;
   --line:#232d3b; --line2:#2f3b4d;
   --fg:#e9eef6; --fg2:#b4bfce; --fg3:#7d8a9d;
   --accent:#5598e7; --accent-soft:rgba(85,152,231,.16);
@@ -18,8 +14,9 @@ img{max-width:100%}
   --f-cond:'Barlow Condensed','Arial Narrow',system-ui,sans-serif;
 }
 *{box-sizing:border-box}
-[hidden]{display:none!important}
-html{-webkit-text-size-adjust:100%}
+html{scroll-padding-top:env(safe-area-inset-top,0px);-webkit-text-size-adjust:100%}
+img,svg{max-width:100%}
+[hidden]:not([hidden=until-found i]){display:none!important}
 body{margin:0;background:var(--bg);color:var(--fg);font:400 15px/1.45 var(--f-body);
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:18px 64px}
 body.lock{overflow:hidden}
@@ -135,18 +132,23 @@ button{font:inherit;color:inherit;cursor:pointer}
 .veh-stage.cut .veh-cutout .veh-photo{filter:drop-shadow(0 18px 14px rgba(0,0,0,.55)) drop-shadow(0 4px 5px rgba(0,0,0,.35))}
 .veh-cutout.is-cut .veh-reflection{display:none}
 .veh-cutout.is-pano{display:flex;width:100%;max-width:none}
-.veh-cutout.is-pano .veh-photo{width:100%;height:200px;max-height:none;object-fit:cover;object-position:center 44%;border-radius:10px}
+.veh-cutout.is-pano .veh-photo{width:100%;height:200px;max-height:none;object-fit:cover;object-position:center 44%;border-radius:10px;
+  -webkit-mask-image:radial-gradient(118% 128% at 50% 45%,#000 48%,rgba(0,0,0,.82) 72%,transparent 100%);
+  mask-image:radial-gradient(118% 128% at 50% 45%,#000 48%,rgba(0,0,0,.82) 72%,transparent 100%)}
 .veh-cutout.is-pano::after{content:'';position:absolute;inset:0;border-radius:10px;pointer-events:none;
-  background:radial-gradient(125% 118% at 50% 45%,transparent 38%,rgba(3,7,12,.3) 76%,rgba(3,7,12,.72) 100%);
-  box-shadow:inset 0 0 40px rgba(0,0,0,.45)}
+  background:radial-gradient(125% 118% at 50% 45%,transparent 38%,rgba(3,7,12,.26) 76%,rgba(3,7,12,.6) 100%);
+  box-shadow:inset 0 0 40px rgba(0,0,0,.35)}
 .veh-stage.pano::before{opacity:.2}
+.veh-stage.cut::before{opacity:.85;filter:blur(9px)}
 .veh-badge{position:absolute;top:10px;left:10px;z-index:3;display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:99px;
   background:rgba(6,12,20,.7);border:1px solid rgba(255,255,255,.16);font:600 10.5px/1 var(--f-body);letter-spacing:.09em;color:#dce9fa;backdrop-filter:blur(6px)}
 .veh-badge .ico{width:13px;height:13px}
-.veh-progress{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;gap:10px;padding:14px;text-align:center;
-  background:rgba(5,9,15,.78);backdrop-filter:blur(6px);color:#eaf3ff;font-size:13px;font-weight:600}
-.veh-progress b{min-width:38px;color:#9ccbff;font-variant-numeric:tabular-nums}
-.veh-progress-spin{width:16px;height:16px;flex:none;border-radius:50%;border:2px solid rgba(255,255,255,.22);border-top-color:#7db8ff;animation:veh-spin .8s linear infinite}
+.veh-progress{position:absolute;right:10px;bottom:10px;z-index:5;display:inline-flex;align-items:center;gap:8px;
+  max-width:calc(100% - 20px);padding:6px 10px;border-radius:99px;border:1px solid rgba(190,220,255,.18);
+  background:rgba(8,14,22,.82);backdrop-filter:blur(8px);color:#eaf3ff;font:600 11.5px/1.2 var(--f-body);letter-spacing:.01em;
+  box-shadow:0 6px 18px rgba(0,0,0,.35);pointer-events:none}
+.veh-progress b{min-width:30px;color:#9ccbff;font-variant-numeric:tabular-nums;text-align:right}
+.veh-progress-spin{width:13px;height:13px;flex:none;border-radius:50%;border:2px solid rgba(255,255,255,.22);border-top-color:#7db8ff;animation:veh-spin .8s linear infinite}
 @keyframes veh-spin{to{transform:rotate(360deg)}}
 /* Plano HUD / Blueprint: contornos reales extraídos de la foto */
 .veh-stage.blueprint{background:radial-gradient(85% 75% at 50% 100%,rgba(85,152,231,.10),transparent 72%),linear-gradient(180deg,#0b1119 0%,#070b11 58%,#05080d 100%)}

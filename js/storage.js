@@ -36,9 +36,17 @@ window.AC = window.AC || {};
     {id:'naranja',n:'Amarillo/Naranja',hex:'#f2a007',light:'#ffd763',dark:'#9d5a00'}
   ];
   const DEMO_PHOTO='./icons/demo-car.png';
-  const VEHICLE_DEFAULT={brand:'Chevrolet',model:'Onix RS',year:2024,body:'hatchback',color:'#F8FAFC',photoDataUrl:DEMO_PHOTO,photoCut:false,usePhoto:true};
+  const VEHICLE_DEFAULT={brand:'Chevrolet',model:'Onix RS',year:2024,body:'hatchback',color:'#F8FAFC',
+    photoDataUrl:DEMO_PHOTO,photoOriginal:null,photoFallback:null,photoCutDataUrl:null,photoCutModel:null,
+    photoCut:false,photoCutWanted:true,photoView:'fallback',usePhoto:true};
+  /* Estado "sin vehículo": ni demo, ni datos de fábrica, ni foto. La marca `empty`
+     evita que normalize() vuelva a inyectar VEHICLE_DEFAULT al recargar. */
+  const EMPTY_VEHICLE={brand:'',model:'',year:'',body:'hatch',color:'#F8FAFC',
+    photoDataUrl:null,photoOriginal:null,photoFallback:null,photoCutDataUrl:null,photoCutModel:null,
+    photoCut:false,photoCutWanted:true,photoView:'fallback',usePhoto:false,empty:true};
 
   function defaults(){return{v:1,updatedAt:0,settings:{name:tr('myCar'),dist:'km',vol:'L',eff:'dist',cur:'UYU',warnKm:1000,warnDays:30},vehicle:Object.assign({},VEHICLE_DEFAULT),entries:[],reminders:[],docs:[]}}
+  function blank(){const b=defaults();b.updatedAt=Date.now();b.settings.name='';b.vehicle=Object.assign({},EMPTY_VEHICLE);return b}
 
   /* Datos de ejemplo: se reemplazan con el primer registro real */
   function demo(today){
@@ -63,13 +71,32 @@ window.AC = window.AC || {};
   }
 
   function normalize(d){
-    const b=defaults(),raw=(d&&d.vehicle)||{},v=b.vehicle;
+    d=d&&typeof d==='object'?d:{};
+    const b=defaults(),raw=(d.vehicle&&typeof d.vehicle==='object')?d.vehicle:{},v=b.vehicle;
+    const settings=Object.assign({},b.settings,(d.settings&&typeof d.settings==='object')?d.settings:{});
+    /* Un estado reiniciado se respeta tal cual: sin vehículo, sin foto y sin demo.
+       Nunca se devuelve un vehicle nulo: app.js puede fiarse siempre del objeto. */
+    if(raw.empty===true){settings.name='';return{v:1,updatedAt:d.updatedAt||0,settings,vehicle:Object.assign({},EMPTY_VEHICLE),entries:[],reminders:[],docs:[]}}
     const year=Number(raw.year);
     const photoRe=/^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+$/i;
     const pathRe=/^(?:\.\/|\/)?[\w./-]+\.(?:png|jpe?g|webp|avif|svg)$/i;
+    const dataUrl=s=>typeof s==='string'&&photoRe.test(s)?s:null;
     const photoRaw=typeof raw.photoDataUrl==='string'?raw.photoDataUrl:(typeof raw.photo==='string'?raw.photo:null);
     const photoDataUrl=photoRaw&&(photoRe.test(photoRaw)||pathRe.test(photoRaw))?photoRaw:null;
     const usePhoto=photoDataUrl?(typeof raw.usePhoto==='boolean'?raw.usePhoto:raw.view==='photo'):false;
+    /* Recorte ya procesado: se guarda en localStorage y se reutiliza tal cual.
+       Se recuerda el modelo que lo generó para poder regenerarlo bajo demanda
+       cuando se instale un segmentador nuevo (recortes antiguos sin esta
+       marca se tratan como obsoletos). */
+    const photoOriginal=dataUrl(raw.photoOriginal);
+    const photoFallback=dataUrl(raw.photoFallback);
+    let photoCutDataUrl=dataUrl(raw.photoCutDataUrl);
+    const photoCutModel=typeof raw.photoCutModel==='string'&&raw.photoCutModel.length<120?raw.photoCutModel:null;
+    const legacyCut=!!photoDataUrl&&!photoCutDataUrl&&raw.photoCut===true&&/^data:image\/png/i.test(photoDataUrl);
+    if(legacyCut)photoCutDataUrl=photoDataUrl;
+    const photoCut=!!photoCutDataUrl&&(raw.photoView==='cut'||(!raw.photoView&&(raw.photoCut===true||legacyCut)));
+    let photoView=photoCut?'cut':(raw.photoView==='original'||raw.photoView==='fallback'?raw.photoView:(photoOriginal?'original':'fallback'));
+    if(photoView==='cut'&&!photoCutDataUrl)photoView=photoOriginal?'original':'fallback';
     const bodyRaw=raw.body==='hatchback'?'hatch':raw.body;
     const colorRaw=typeof raw.color==='string'?raw.color.trim():'';
     const colorHex=/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(colorRaw)?(colorRaw.length===4?'#'+colorRaw[1]+colorRaw[1]+colorRaw[2]+colorRaw[2]+colorRaw[3]+colorRaw[3]:colorRaw).toUpperCase():null;
@@ -80,9 +107,10 @@ window.AC = window.AC || {};
       year:Number.isFinite(year)&&year>=1900&&year<=2100?Math.round(year):v.year,
       body:BODIES.some(x=>x.id===bodyRaw)?bodyRaw:v.body,
       color,
-      photoDataUrl,photoCut:photoDataUrl&&raw.photoCut===true,usePhoto
+      photoDataUrl,photoOriginal,photoFallback,photoCutDataUrl,photoCutModel,
+      photoCut,photoCutWanted:raw.photoCutWanted!==false,photoView,usePhoto
     };
-    return{v:1,updatedAt:(d&&d.updatedAt)||0,settings:Object.assign({},b.settings,d&&d.settings),vehicle,
+    return{v:1,updatedAt:(d&&d.updatedAt)||0,settings,vehicle,
       entries:(Array.isArray(d&&d.entries)?d.entries:[]).filter(e=>e&&e.id&&e.date&&e.type),
       reminders:Array.isArray(d&&d.reminders)?d.reminders:[],docs:Array.isArray(d&&d.docs)?d.docs:[]};
   }
@@ -92,14 +120,105 @@ window.AC = window.AC || {};
   const cap=n=>{try{return window.claude&&window.claude.use?window.claude.use(n):Promise.resolve(null)}catch(e){return Promise.resolve(null)}};
 
   function load(){
-    try{const r=localStorage.getItem(KEY);if(r)return normalize(JSON.parse(r))}catch(e){}
+    try{
+      /* Tras un reinicio no se guarda el estado vacío: sólo un marcador que impide
+         que load() vuelva a generar el demo de fábrica. */
+      if(localStorage.getItem(KEY+'-empty')==='1')return blank();
+      const r=localStorage.getItem(KEY);if(r)return normalize(JSON.parse(r));
+    }catch(e){}
     return demo(todayISO());
   }
 
   let state=load();
   let dbRef=null,saving=false,again=false,timer=null,retry=null,syncKind='local';
 
-  function save(){try{localStorage.setItem(KEY,JSON.stringify(state))}catch(e){}}
+  function persistState(){
+    try{
+      localStorage.removeItem(KEY+'-empty');
+      localStorage.setItem(KEY,JSON.stringify(state));
+      return true;
+    }catch(e){return false}
+  }
+  function save(){
+    try{
+      if(state&&state.vehicle&&state.vehicle.empty){
+        localStorage.removeItem(KEY);
+        localStorage.setItem(KEY+'-empty','1');
+        return;
+      }
+      if(!persistState()){
+        /* Cuota casi llena: se conserva el PNG ya recortado (lo esencial para
+           seguir funcionando offline) y se descartan las copias sin recortar. */
+        const v=state&&state.vehicle;
+        if(v&&(v.photoOriginal||v.photoFallback)){
+          v.photoOriginal=null;v.photoFallback=null;
+          if(v.photoView!=='cut'&&v.photoCutDataUrl)v.photoDataUrl=v.photoCutDataUrl;
+          persistState();
+        }
+      }
+    }catch(e){}
+  }
+
+  /* ---------- Reinicio absoluto ---------- */
+  const IMAGE_RE=/\.(?:png|jpe?g|gif|webp|avif|bmp|svg)(?:$|\?)/i;
+  function clearLocalStorage(){
+    try{
+      const langKey=(AC.i18n&&AC.i18n.KEY)||'autocare-lang',doomed=[KEY,KEY+'-tab',KEY+'-empty'];
+      for(let i=0;i<localStorage.length;i++){
+        const k=localStorage.key(i);
+        if(k&&(k===KEY||k===KEY+'-tab'||k===KEY+'-empty'||(k.indexOf('autocare-')===0&&k!==langKey))&&doomed.indexOf(k)<0)doomed.push(k);
+      }
+      doomed.forEach(k=>{try{localStorage.removeItem(k)}catch(e){}});
+    }catch(e){}
+  }
+  function isUserImageRequest(req){
+    try{
+      const u=new URL(req.url);
+      if(/^\.?\/?icons\//i.test(u.pathname)||/\/icons\//i.test(u.pathname))return false;
+      return req.destination==='image'||IMAGE_RE.test(u.pathname);
+    }catch(e){return false}
+  }
+  async function purgeAppStores(){
+    /* IndexedDB: sólo bases propias/de imagenes; se respeta la DB remota (Firestore). */
+    try{
+      if(typeof indexedDB!=='undefined'&&typeof indexedDB.databases==='function'){
+        const list=await indexedDB.databases();
+        await Promise.all(list.filter(x=>/autocare|ac[-_]?(img|photo|bp|blueprint)/i.test(String(x.name||''))).map(x=>new Promise(res=>{
+          try{const q=indexedDB.deleteDatabase(x.name);q.onsuccess=q.onerror=q.onblocked=()=>res()}
+          catch(e){res()}
+        })));
+      }
+    }catch(e){}
+    /* Cache Storage: se eliminan imagenes de usuario, no los iconos de la app. */
+    try{
+      if(window.caches){
+        const names=await caches.keys();
+        await Promise.all(names.map(async name=>{
+          const c=await caches.open(name),reqs=await c.keys();
+          await Promise.all(reqs.filter(isUserImageRequest).map(r=>c.delete(r).catch(()=>{})));
+        }));
+      }
+    }catch(e){}
+    /* El service worker también limpia su caché ( útil en iPhone / modo standalone ). */
+    try{
+      const msg={type:'AC_PURGE_USER_IMAGES'};
+      if(navigator.serviceWorker&&navigator.serviceWorker.controller)navigator.serviceWorker.controller.postMessage(msg);
+      else if(navigator.serviceWorker&&navigator.serviceWorker.getRegistration){
+        navigator.serviceWorker.getRegistration().then(r=>{
+          const w=r&&(r.active||r.waiting||r.installing);if(w)w.postMessage(msg);
+        }).catch(()=>{});
+      }
+    }catch(e){}
+  }
+  function wipe(){
+    clearTimeout(timer);clearTimeout(retry);timer=null;retry=null;again=false;
+    clearLocalStorage();
+    state=blank();
+    save();
+    purgeAppStores();
+    return state;
+  }
+
   function setSync(k){
     syncKind=k;const el=document.getElementById('sync');if(!el)return;
     el.className='sync '+k;
@@ -174,9 +293,9 @@ window.AC = window.AC || {};
   }
 
   /* API pública consumida por app.js */
-  AC.core={DIST,VOL,CATS,GROUPS,BRANDS,BODIES,COLORS,VEHICLE_DEFAULT,DEMO_PHOTO,iso,todayISO,parseISO,addDays,addMonths,daysBetween,catOf,hasOdo,defaults,demo,normalize};
+  AC.core={DIST,VOL,CATS,GROUPS,BRANDS,BODIES,COLORS,VEHICLE_DEFAULT,EMPTY_VEHICLE,DEMO_PHOTO,iso,todayISO,parseISO,addDays,addMonths,daysBetween,catOf,hasOdo,defaults,blank,demo,normalize};
   AC.storage={
-    KEY,cap,load,normalize,commit,connect,setSync,
+    KEY,cap,load,normalize,commit,connect,setSync,wipe,
     get state(){return state},
     set(v){state=v;return state},
     syncKind:()=>syncKind,

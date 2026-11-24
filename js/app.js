@@ -3,7 +3,10 @@
   'use strict';
 
   const AC=window.AC;
-  const T=AC.i18n.t, TLIST=AC.i18n.tl, LOC=()=>AC.i18n.locale;
+  /* i18n.js se carga antes, pero si no estuviera disponible no debe abortar el
+     arranque: las claves siguen visibles en el HTML y la interfaz se renderiza. */
+  const I18N=AC.i18n||{t:k=>k,tl:()=>[],apply(){},set(){return false},lang:'en',locale:'en-US'};
+  const T=I18N.t, TLIST=I18N.tl, LOC=()=>I18N.locale;
 
   /* ---------- Lógica de cálculo (sin DOM) ---------- */
   function currentOdo(E){let m=null;E.forEach(e=>{if(AC.core.hasOdo(e)&&(m==null||e.odo>m))m=e.odo});return m}
@@ -102,8 +105,18 @@
   const BRANDS=AC.core.BRANDS, BODIES=AC.core.BODIES, COLORS=AC.core.COLORS;
   let svgSeq=0,vehicleDraft=null,bgModPromise=null,demoPhotoJob=false,demoPhotoFailed=false;
   const DEMO_PHOTO=AC.core.DEMO_PHOTO||'./icons/demo-car.png';
+  const EMPTY_VEHICLE=AC.core.EMPTY_VEHICLE||{brand:'',model:'',year:'',body:'hatch',color:'#F8FAFC',photoDataUrl:null,photoCut:false,usePhoto:false,empty:true};
 
-  const veh=()=>state.vehicle||AC.core.VEHICLE_DEFAULT;
+  /* Nunca devolver el objeto compartido EMPTY_VEHICLE: si no hay vehículo se
+     materializa una copia en el estado, para que guardar foto/nombre no mute la
+     constante ni deje `state.vehicle` a null al persistir. */
+  function veh(){
+    if(!state.vehicle||typeof state.vehicle!=='object')state.vehicle=Object.assign({},EMPTY_VEHICLE);
+    return state.vehicle;
+  }
+  /* Sólo se considera "configurado" un vehículo real, nunca el estado posterior a un reinicio. */
+  const isConfigured=()=>{const v=state.vehicle;return !!(v&&!v.empty&&((v.brand&&v.brand.trim())||(v.model&&v.model.trim())||v.photoDataUrl))};
+  const markConfigured=()=>{veh().empty=false};
   function shade(hex,amt){
     const h=String(hex||'#000000').replace('#',''),f=h.length===3?h.split('').map(c=>c+c).join(''):h;
     const n=parseInt(f,16)||0,r=n>>16&255,g=n>>8&255,b=n&255;
@@ -223,6 +236,15 @@
 
   /* ---------- Plano HUD real: bordes de la foto recortada (Sobel en canvas) ---------- */
   const BP_W=640,BP_H=250,BP_CACHE=new Map(),BP_PENDING=new Map(),BP_FAILED=new Set(),BP_MAX=8;
+  let visualEpoch=0;
+  /* Limpia fotos, planos y trabajos en curso para que un reinicio no "resucite" la imagen anterior. */
+  function clearVehicleVisuals(){
+    visualEpoch++;
+    BP_CACHE.clear();BP_PENDING.clear();BP_FAILED.clear();
+    demoPhotoJob=false;demoPhotoFailed=false;bgModPromise=null;bgPipePromise=null;bgPipeKey='';bgPipeFailures=Object.create(null);cutInFlight=null;vehicleDraft=null;
+    document.querySelectorAll('.veh-bp-img,.veh-cutout,.veh-progress').forEach(el=>el.remove());
+  }
+  AC.clearVisuals=clearVehicleVisuals;
   function bpKey(src,ink){
     let h=2166136261;const step=Math.max(1,Math.floor(src.length/512));
     for(let i=0;i<src.length;i+=step){h^=src.charCodeAt(i);h=Math.imul(h,16777619)}
@@ -341,11 +363,18 @@
     if(BP_CACHE.has(key))return Promise.resolve(BP_CACHE.get(key));
     if(BP_PENDING.has(key))return BP_PENDING.get(key);
     if(BP_FAILED.has(key))return Promise.resolve(null);
+    const epoch=visualEpoch;
     const p=buildBlueprint(photoDataUrl,ink).then(data=>{
+      if(BP_PENDING.get(key)===p)BP_PENDING.delete(key);
+      if(epoch!==visualEpoch)return null;
       BP_CACHE.set(key,data);
       if(BP_CACHE.size>BP_MAX)BP_CACHE.delete(BP_CACHE.keys().next().value);
-      BP_PENDING.delete(key);paintBlueprints();return data;
-    },()=>{BP_PENDING.delete(key);BP_FAILED.add(key);return null});
+      paintBlueprints();return data;
+    },()=>{
+      if(BP_PENDING.get(key)===p)BP_PENDING.delete(key);
+      if(epoch===visualEpoch)BP_FAILED.add(key);
+      return null;
+    });
     BP_PENDING.set(key,p);return p;
   }
   function cachedBlueprint(v){
@@ -398,13 +427,31 @@
   function stageHTML(v){
     const photo=isPhotoActive(v);
     const badge=photo
-      ?'<span class="veh-badge"><svg class="ico"><use href="#i-camera"/></svg>'+T(v.photoCut?'cutoutBadge':'photoBadge')+'</span>'
-      :'<span class="veh-badge"><svg class="ico"><use href="#i-cube"/></svg>'+T('blueprintBadge')+'</span>';
+      ?'<span class="veh-badge"><svg width="20" height="20" class="ico"><use href="#i-camera"/></svg>'+T(v.photoCut?'cutoutBadge':'photoBadge')+'</span>'
+      :'<span class="veh-badge"><svg width="20" height="20" class="ico"><use href="#i-cube"/></svg>'+T('blueprintBadge')+'</span>';
     const cls=photo?(v.photoCut?' cut':' pano'):' blueprint';
     return'<div class="veh-visual"><div class="veh-stage'+cls+'">'+badge+vehicleVisual(v)+'</div></div>';
   }
 
+  /* Estado en blanco: silueta genérica + invitación explícita a configurar nombre y foto. */
+  function emptyStageHTML(){
+    return'<div class="veh-visual"><div class="veh-stage blueprint">'
+      +'<span class="veh-badge"><svg width="20" height="20" class="ico"><use href="#i-cube"/></svg>'+T('blueprintBadge')+'</span>'
+      +'<div class="veh-bp-empty">'+blueprintPlaceholder(EMPTY_VEHICLE,false)
+      +'<p class="veh-bp-hint">'+esc(T('setupHint'))+'</p></div></div></div>';
+  }
+  function renderEmptyVehicle(){
+    $('#vehicleCard').innerHTML='<div class="veh">'+emptyStageHTML()+'<div class="veh-body">'
+      +'<div class="veh-kicker">'+esc(T('noVehicle'))+'</div>'
+      +'<h2 class="veh-name">'+esc(T('setupVehicle'))+'</h2>'
+      +'<div class="veh-tools">'
+      +'<button type="button" class="btn sm" data-act="edit-vehicle"><svg width="20" height="20" class="ico"><use href="#i-edit"/></svg>'+T('editVehicle')+'</button>'
+      +'<label class="btn sm ghost" for="vehPhotoEmpty"><svg width="20" height="20" class="ico"><use href="#i-camera"/></svg>'+T('uploadPhoto')+'</label>'
+      +'<input id="vehPhotoEmpty" type="file" accept="image/*" hidden>'
+      +'</div></div></div>';
+  }
   function renderVehicle(){
+    if(!isConfigured()){renderEmptyVehicle();return}
     const v=veh(),c=colorOf(v.color),name=(v.brand+' '+v.model).trim(),photo=isPhotoActive(v),has=hasPhoto(v);
     if(has)ensureBlueprint(v); /* se precalcula para que el cambio de vista sea instantáneo */
     $('#vehicleCard').innerHTML='<div class="veh">'+stageHTML(v)+'<div class="veh-body">'
@@ -412,10 +459,11 @@
       +'<div class="veh-meta"><span>'+esc(v.year)+'</span><span class="sep">·</span><span>'+esc(bodyName(v.body))+'</span><span class="sep">·</span>'
       +'<span class="dot" style="background:'+c.hex+'"></span><span>'+esc(colorName(v.color))+'</span></div>'
       +'<div class="veh-tools">'
-      +'<button type="button" class="btn sm" data-act="edit-vehicle"><svg class="ico"><use href="#i-edit"/></svg>'+T('editVehicle')+'</button>'
-      +'<label class="btn sm ghost" for="vehPhoto"><svg class="ico"><use href="#i-camera"/></svg>'+T(has?'changePhoto':'uploadPhoto')+'</label>'
+      +'<button type="button" class="btn sm" data-act="edit-vehicle"><svg width="20" height="20" class="ico"><use href="#i-edit"/></svg>'+T('editVehicle')+'</button>'
+      +'<label class="btn sm ghost" for="vehPhoto"><svg width="20" height="20" class="ico"><use href="#i-camera"/></svg>'+T(has?'changePhoto':'uploadPhoto')+'</label>'
       +'<input id="vehPhoto" type="file" accept="image/*" hidden>'
-      +(has?'<button type="button" class="btn sm ghost" data-act="veh-view-toggle"><svg class="ico"><use href="#i-'+(photo?'cube':'camera')+'"/></svg>'+T(photo?'useBlueprint':'useMyPhoto')+'</button>':'')
+      +(has?'<button type="button" class="btn sm ghost" data-act="veh-view-toggle"><svg width="20" height="20" class="ico"><use href="#i-'+(photo?'cube':'camera')+'"/></svg>'+T(photo?'useBlueprint':'useMyPhoto')+'</button>':'')
+      +(has&&(v.photoOriginal||v.photoCutDataUrl)?'<button type="button" class="btn sm ghost" data-act="veh-cut-toggle"><svg width="20" height="20" class="ico"><use href="#i-'+(v.photoCut&&!isStaleCut(v)?'camera':'cube')+'"/></svg>'+T(v.photoCut&&!isStaleCut(v)?'originalPhoto':'cutoutAI')+'</button>':'')
       +'</div></div></div>';
   }
 
@@ -433,27 +481,123 @@
     card.addEventListener('pointerleave',reset);card.addEventListener('pointercancel',reset);
   }
 
-  /* ---------- Recorte de fondo client-side (IMG.LY / ONNX en el navegador) ---------- */
+  /* ---------- Recorte de fondo client-side (Transformers.js / RMBG-1.4 en WASM) ----------
+     El módulo y los pesos ONNX se descargan solo cuando se pide un recorte,
+     desde URLs CDN autocontenidas (sin publicPath/relative asset issues).
+     El PNG resultante se guarda en localStorage junto al modelo que lo generó:
+     las recargas no reprocesan, pero un recorte del modelo anterior puede
+     regenerarse pulsando otra vez "Recorte IA". */
   const readFile=file=>new Promise((res,rej)=>{const rd=new FileReader();rd.onload=()=>res(rd.result);rd.onerror=()=>rej(new Error('file'));rd.readAsDataURL(file)});
   const loadImage=src=>new Promise((res,rej)=>{const im=new Image();im.onload=()=>res(im);im.onerror=()=>rej(new Error('image'));im.src=src});
   const withTimeout=(p,ms)=>Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),ms))]);
+  /* URL completa: jsDelivr sirve el bundle ESM con todos sus chunks internos
+     bajo el mismo prefijo, por lo que no hay rutas relativas rotas. */
+  /* NOTA: 3.3.3 no registra el task 'background-removal' (verificado en el
+     bundle: solo image-segmentation, image-classification, etc.); el task se
+     introdujo en 3.5.x. Se usa 3.7.6, estable y con soporte WASM + RMBG. */
+  const BG_MODULE_URL='https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.6';
+  /* RMBG-1.4 es un segmentador de objeto principal (entrenado también con
+     autos/objetos, no sólo retratos), así que conserva la carrocería completa.
+     Se prueba primero el id solicitado; si ese repo no publica pesos ONNX se
+     usa el repo oficial briaai/RMBG-1.4 (mismo modelo, con onnx/model.onnx).
+     MODNET queda únicamente como último respaldo si fallan los dos RMBG. */
+  const BG_MODELS=[
+    {id:'onnx-community/RMBG-1.4',dtype:'fp32'},
+    {id:'briaai/RMBG-1.4',dtype:'fp32'},
+    {id:'Xenova/modnet',dtype:'fp32'}
+  ];
+  const PHOTO_FIELDS=['photoDataUrl','photoOriginal','photoFallback','photoCutDataUrl','photoCutModel','photoCut','photoCutWanted','photoView','usePhoto'];
+  let cutInFlight=null,bgPipePromise=null,bgPipeKey='',bgPipeFailures=Object.create(null),bgModelUsed='';
+  /* Un PNG guardado por una versión anterior no tiene photoCutModel (o tiene un
+     id que ya no usamos): se considera obsoleto y se regenera bajo demanda. */
+  const isStaleCut=v=>!!(v&&v.photoCutDataUrl&&(!v.photoCutModel||!BG_MODELS.some(m=>m.id===v.photoCutModel)));
+  /* Fuente siempre sin recortar: si la vista actual es el PNG recortado, se
+     vuelve a la original guardada (o a la foto de demo) para no degradar el
+     resultado al segmentar dos veces. */
+  function cutSource(v){
+    if(v.photoOriginal)return v.photoOriginal;
+    if(v.photoFallback)return v.photoFallback;
+    if(v.photoDataUrl===DEMO_PHOTO)return DEMO_PHOTO;
+    return v.photoDataUrl||null;
+  }
 
-  function loadBgRemoval(){
-    if(!bgModPromise)bgModPromise=import('https://esm.sh/@imgly/background-removal@1.5.5').catch(e=>{bgModPromise=null;throw e});
+  function loadBgModule(){
+    if(!bgModPromise)bgModPromise=import(/* @vite-ignore */ BG_MODULE_URL)
+      .catch(e=>{bgModPromise=null;throw e});
     return bgModPromise;
   }
+  function getSegmenter(onPct){
+    const key=BG_MODELS.map(m=>m.id).join('|')+'|wasm';
+    if(bgPipePromise&&bgPipeKey===key)return bgPipePromise;
+    bgPipeKey=key;
+    bgPipePromise=(async()=>{
+      const mod=await loadBgModule();
+      if(typeof mod.pipeline!=='function')throw new Error('transformers.pipeline missing');
+      let lastErr;
+      for(const m of BG_MODELS){
+        if(bgPipeFailures[m.id])continue;
+        try{
+          onPct(8);
+          const pipe=await mod.pipeline('background-removal',m.id,{
+            /* forzamos WASM: las GPU/WebGPU no están disponibles de forma
+               fiable en todos los navegadores y el fallback es silencioso. */
+            device:'wasm',dtype:m.dtype,
+            progress_callback:p=>{
+              if(!p||typeof p.progress!=='number')return;
+              /* 10..70: descarga del modelo; el resto es inferencia. */
+              onPct(10+p.progress*60);
+            }
+          });
+          bgModelUsed=m.id;
+          return pipe;
+        }catch(err){
+          lastErr=err;
+          bgPipeFailures[m.id]=Date.now();
+          console.warn('[AutoCare] background model failed: '+m.id,err);
+        }
+      }
+      throw lastErr||new Error('no background segmentation model');
+    })().catch(e=>{bgPipePromise=null;throw e});
+    return bgPipePromise;
+  }
   async function cutoutWithAI(src,onPct){
-    const mod=await loadBgRemoval();
-    const fn=mod.removeBackground||(mod.default&&mod.default.removeBackground);
-    if(typeof fn!=='function')throw new Error('no-api');
-    const cfg={model:'isnet_quint8',output:{format:'image/png',quality:.85},
-      progress:(key,current,total)=>{if(total>0)onPct(current/total*100)}};
-    try{return await fn(src,cfg)}
-    catch(err){
-      const msg=String((err&&err.message)||err||'');
-      if(/model|config|invalid|unsupported|isnet|\.onnx|404/i.test(msg))return await fn(src,Object.assign({},cfg,{model:'small'}));
-      throw err;
+    const pipe=await getSegmenter(onPct);
+    let image=src;
+    /* El pipeline acepta data URLs, URLs http(s) e ImageData. Las fotos de
+       demo se sirven desde el propio origen, sin problemas de CORS. */
+    if(typeof src==='string'&&!/^https?:|^data:/i.test(src)){
+      image=new URL(src,location.href).href;
     }
+    onPct(72);
+    const result=await pipe(image,{raw:false});
+    onPct(96);
+    let output=Array.isArray(result)?result[0]:result;
+    /* 3.7.6 devuelve RawImage (con alpha ya aplicado) dentro de un array.
+       RawImage expone toCanvas()/toBlob(); también se aceptan las variantes
+       ImageData/canvas de otras versiones. */
+    let img=output&&output.image?output.image:output;
+    /* Algunas builds devuelven un OffscreenCanvas desde toCanvas() (sin
+       toDataURL): aunque intente esa vía, se cae al blob PNG. */
+    if(img&&typeof img.toCanvas==='function'){
+      try{
+        const canvas=img.toCanvas();
+        if(canvas&&typeof canvas.toDataURL==='function')return canvas.toDataURL('image/png');
+      }catch(e){/* se intenta con toBlob() abajo */}
+    }
+    if(img&&typeof img.toBlob==='function'){
+      const blob=await img.toBlob('image/png');
+      return new Promise((res,rej)=>{
+        const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=()=>rej(new Error('png'));fr.readAsDataURL(blob);
+      });
+    }
+    if(img&&typeof img.toDataURL==='function')return img.toDataURL('image/png');
+    if(img&&img.data&&img.width&&img.height){
+      const cv=document.createElement('canvas');
+      cv.width=img.width;cv.height=img.height;
+      cv.getContext('2d').putImageData(img,0,0);
+      return cv.toDataURL('image/png');
+    }
+    throw new Error('unexpected segmentation output: '+Object.prototype.toString.call(img));
   }
   function trimTransparentPixels(srcCv,alphaThreshold){
     const w=srcCv.width,h=srcCv.height,ctx=srcCv.getContext('2d');
@@ -478,7 +622,11 @@
   }
 
   function pngFromBlob(blob,maxW,maxH){
-    const url=URL.createObjectURL(blob);
+    /* Transformers.js entrega un PNG data URL; si viniera un Blob se
+       transforma en object URL. Ambos caminos producen el mismo canvas. */
+    const isData=typeof blob==='string'&&/^data:image\//.test(blob);
+    const url=isData?blob:URL.createObjectURL(blob);
+    const release=()=>{if(!isData)URL.revokeObjectURL(url)};
     return loadImage(url).then(im=>{
       const sc=Math.min(1,maxW/im.width,maxH/im.height),cv=document.createElement('canvas');
       cv.width=Math.max(1,Math.round(im.width*sc));cv.height=Math.max(1,Math.round(im.height*sc));
@@ -493,77 +641,192 @@
       const dx=(outW-dw)/2,dy=(outH-dh)/2;
       octx.drawImage(trimmed,0,0,trimmed.width,trimmed.height,dx,dy,dw,dh);
       return out.toDataURL('image/png');
-    }).then(data=>{URL.revokeObjectURL(url);return data},err=>{URL.revokeObjectURL(url);throw err});
+    }).then(data=>{release();return data},err=>{release();throw err});
   }
-  function panoJPEG(im){
-    let sw=Math.min(im.width,700),sh=sw/2;
-    if(sh>im.height){sh=im.height;sw=Math.min(im.width,Math.round(sh*2))}
-    const sx=Math.round((im.width-sw)/2),sy=Math.round((im.height-sh)*.42),cv=document.createElement('canvas');
-    cv.width=Math.max(1,Math.round(sw));cv.height=Math.max(1,Math.round(sh));
-    cv.getContext('2d').drawImage(im,sx,sy,sw,sh,0,0,cv.width,cv.height);
+  /* El PNG recortado se guarda con un techo de tamaño para no agotar localStorage. */
+  async function pngCutData(blob){
+    let data=await pngFromBlob(blob,900,560);
+    if(data.length>1400000)data=await pngFromBlob(blob,700,440);
+    if(data.length>1400000)data=await pngFromBlob(blob,560,360);
+    return data;
+  }
+  function jpegData(im,maxW,maxH,quality){
+    const sc=Math.min(1,maxW/im.width,maxH/im.height),cv=document.createElement('canvas');
+    cv.width=Math.max(1,Math.round(im.width*sc));cv.height=Math.max(1,Math.round(im.height*sc));
+    const ctx=cv.getContext('2d');
+    ctx.fillStyle='#0b1018';ctx.fillRect(0,0,cv.width,cv.height);
+    ctx.drawImage(im,0,0,cv.width,cv.height);
+    return cv.toDataURL('image/jpeg',quality);
+  }
+  /* Respaldo sin conexión: encuadre panorámico con viñeta radial. No hay
+     umbrales de color ni borrado por esquina: la imagen nunca se mancha. */
+  function vignetteJPEG(im){
+    let W=Math.min(im.width,900),H=Math.round(W/2);
+    if(H>im.height){H=im.height;W=Math.min(im.width,Math.round(H*2))}
+    const sx=Math.round((im.width-W)/2),sy=Math.round((im.height-H)*.42);
+    const cv=document.createElement('canvas');cv.width=Math.max(1,W);cv.height=Math.max(1,H);
+    const ctx=cv.getContext('2d');
+    ctx.drawImage(im,sx,sy,W,H,0,0,cv.width,cv.height);
+    const g=ctx.createRadialGradient(cv.width/2,cv.height*.46,cv.height*.12,
+      cv.width/2,cv.height*.46,Math.max(cv.width,cv.height)*.68);
+    g.addColorStop(0,'rgba(3,7,12,0)');
+    g.addColorStop(.58,'rgba(3,7,12,.05)');
+    g.addColorStop(1,'rgba(3,7,12,.62)');
+    ctx.fillStyle=g;ctx.fillRect(0,0,cv.width,cv.height);
     return cv.toDataURL('image/jpeg',.78);
   }
+
+  /* Indicador discreto: una píldora dentro del escenario, nunca una cortina. */
   function showProgress(){
+    const label=esc(T('cuttingOut'));
     document.querySelectorAll('.veh-stage').forEach(st=>{
       if(st.querySelector('.veh-progress'))return;
       const el=document.createElement('div');el.className='veh-progress';
-      el.innerHTML='<span class="veh-progress-spin"></span><span>'+esc(T('cuttingOut'))+'</span><b>0%</b>';
+      el.innerHTML='<span class="veh-progress-spin" aria-hidden="true"></span><span>'+label+'</span><b>0%</b>';
       st.appendChild(el);
     });
+    const live=document.getElementById('cutStatus');if(live)live.textContent=T('cuttingOut');
   }
   function setProgress(pct){
     document.querySelectorAll('.veh-progress b').forEach(b=>{b.textContent=Math.max(0,Math.min(100,Math.round(pct)))+'%'});
   }
-  function hideProgress(){document.querySelectorAll('.veh-progress').forEach(el=>el.remove())}
+  function hideProgress(){
+    document.querySelectorAll('.veh-progress').forEach(el=>el.remove());
+    const live=document.getElementById('cutStatus');if(live)live.textContent='';
+  }
+
+  const photoTarget=inModal=>(inModal&&vehicleDraft)?vehicleDraft:veh();
+  function persistPhoto(v,inModal,paint,tools){
+    markConfigured();
+    PHOTO_FIELDS.forEach(k=>{veh()[k]=v[k]});
+    if(inModal&&vehicleDraft)PHOTO_FIELDS.forEach(k=>{vehicleDraft[k]=v[k]});
+    commit();
+    if(paint)paint();if(tools)tools();
+  }
+  function setPhotoView(v,which,keepWanted){
+    if(!v)return;
+    const cut=which==='cut'&&!!v.photoCutDataUrl;
+    const original=which==='original'&&!!v.photoOriginal;
+    const src=cut?v.photoCutDataUrl:(original?v.photoOriginal:(v.photoFallback||v.photoOriginal||v.photoDataUrl));
+    if(src)v.photoDataUrl=src;
+    v.photoView=cut?'cut':original?'original':'fallback';
+    v.photoCut=cut;
+    v.photoCutWanted=typeof keepWanted==='boolean'?keepWanted:which==='cut';
+    v.usePhoto=true;v.empty=false;
+  }
+  /* Recorte bajo demanda. Si no hay conexión (o el módulo no está cacheado) se
+     mantiene el encuadre con viñeta y se permite reintentar cuando vuelva la red. */
+  function runCutout(src,inModal,paint,tools){
+    if(cutInFlight&&cutInFlight.src===src)return cutInFlight.promise;
+    const promise=doRunCutout(src,inModal,paint,tools);
+    cutInFlight={src,promise};
+    return promise.then(r=>{if(cutInFlight&&cutInFlight.promise===promise)cutInFlight=null;return r},
+                        e=>{if(cutInFlight&&cutInFlight.promise===promise)cutInFlight=null;throw e});
+  }
+  async function doRunCutout(src,inModal,paint,tools){
+    const epoch=visualEpoch;
+    let v=photoTarget(inModal);
+    if(v.photoCutDataUrl&&!isStaleCut(v)){
+      setPhotoView(v,'cut');persistPhoto(v,inModal,paint,tools);return true;
+    }
+    if(navigator.onLine===false){
+      /* Si hay un recorte anterior no lo descartamos: se muestra mientras no
+         haya red para regenerarlo con el modelo nuevo. */
+      if(v.photoCutDataUrl)setPhotoView(v,'cut');
+      else setPhotoView(v,'fallback',true);
+      persistPhoto(v,inModal,paint,tools);
+      toast(T('photoFallback'));return false;
+    }
+    showProgress();setProgress(4);
+    try{
+      const blob=await withTimeout(cutoutWithAI(src,setProgress),120000);
+      const png=await pngCutData(blob);
+      if(epoch!==visualEpoch)return false;
+      v=photoTarget(inModal);
+      v.photoCutDataUrl=png;
+      v.photoCutModel=bgModelUsed||BG_MODELS[0].id;
+      setPhotoView(v,'cut');
+      persistPhoto(v,inModal,paint,tools);
+      toast(T(inModal?'photoReady':'photoSaved'));
+      return true;
+    }catch(err){
+      console.warn('[AutoCare] AI cutout failed (technical detail):',err&&err.stack?err.stack:err);
+      if(epoch===visualEpoch){
+        v=photoTarget(inModal);
+        setPhotoView(v,'fallback',true);
+        persistPhoto(v,inModal,paint,tools);
+        toast(T('photoFallback'));
+      }
+      return false;
+    }finally{hideProgress()}
+  }
+  function toggleCutout(inModal,paint,tools){
+    const v=photoTarget(inModal);
+    if(!v||!v.photoDataUrl)return;
+    if(isStaleCut(v)){
+      /* Recorte del modelo anterior: "Recorte IA" lo regenera en lugar de
+         limitarse a volver a mostrar el PNG ya guardado. */
+      const src=cutSource(v);
+      if(src)runCutout(src,inModal,paint,tools);
+      return;
+    }
+    if(v.photoCut||v.photoView==='cut'){
+      setPhotoView(v,'original');persistPhoto(v,inModal,paint,tools);
+      toast(T('originalPhoto'));return;
+    }
+    if(v.photoCutDataUrl){
+      setPhotoView(v,'cut');persistPhoto(v,inModal,paint,tools);
+      toast(T('cutoutAI'));return;
+    }
+    const src=cutSource(v);
+    if(src)runCutout(src,inModal,paint,tools);
+  }
 
   async function handlePhoto(file,inModal,paint,tools){
     if(!file)return;
     if(!/^image\//i.test(file.type)){toast(T('pickImage'));return}
+    const epoch=visualEpoch;
     let src,im;
     try{src=await readFile(file);im=await loadImage(src)}
     catch(err){toast(err.message==='file'?T('fileReadErr'):T('photoReadErr'));return}
-    const apply=(data,cut)=>{
-      if(inModal&&vehicleDraft){
-        vehicleDraft.photoDataUrl=data;vehicleDraft.photoCut=cut;vehicleDraft.usePhoto=true;
-        Object.assign(veh(),{photoDataUrl:data,photoCut:cut,usePhoto:true});
-        commit();
-        if(paint)paint();if(tools)tools();
-      }else{
-        Object.assign(veh(),{photoDataUrl:data,photoCut:cut,usePhoto:true});commit();
-      }
-    };
-    showProgress();setProgress(6);
+    if(epoch!==visualEpoch)return;
+    /* La foto original y su encuadre suave se guardan antes de intentar la IA:
+       así siempre hay una vista utilizable, incluso sin conexión. */
+    const v=photoTarget(inModal);
     try{
-      const blob=await withTimeout(cutoutWithAI(src,setProgress),30000);
-      let data=await pngFromBlob(blob,900,560);
-      if(data.length>1400000)data=await pngFromBlob(blob,700,440);
-      if(data.length>1400000)data=await pngFromBlob(blob,560,360);
-      apply(data,true);
-      toast(inModal?T('photoReady'):T('photoSaved'));
-    }catch(err){
-      try{apply(panoJPEG(im),false);toast(T('photoFallback'))}
-      catch(e2){toast(T('photoProcessErr'))}
-    }finally{hideProgress()}
+      v.photoOriginal=jpegData(im,1280,800,.74);
+      v.photoFallback=vignetteJPEG(im);
+    }catch(e){v.photoOriginal=src;v.photoFallback=src}
+    v.photoCutDataUrl=null;
+    const wanted=v.photoCutWanted!==false;
+    setPhotoView(v,'fallback',wanted);
+    persistPhoto(v,inModal,paint,tools);
+    if(wanted)return runCutout(src,inModal,paint,tools);
+    toast(T(inModal?'photoReady':'photoSaved'));
+    return false;
   }
 
   async function processDemoPhoto(){
     const v=veh();
-    if(!hasDemo()||demoPhotoJob||demoPhotoFailed||!v||v.photoDataUrl!==DEMO_PHOTO)return;
+    if(!hasDemo()||demoPhotoJob||demoPhotoFailed||!v||v.photoDataUrl!==DEMO_PHOTO||v.photoCutDataUrl)return;
+    if(navigator.onLine===false){demoPhotoFailed=true;return}
+    const epoch=visualEpoch;
     demoPhotoJob=true;
     try{
       const src=new URL(DEMO_PHOTO,location.href).href;
-      const blob=await withTimeout(cutoutWithAI(src,()=>{}),45000);
-      let data=await pngFromBlob(blob,900,560);
-      if(data.length>1400000)data=await pngFromBlob(blob,700,440);
-      if(data.length>1400000)data=await pngFromBlob(blob,560,360);
+      const blob=await withTimeout(cutoutWithAI(src,()=>{}),120000);
+      const png=await pngCutData(blob);
+      if(epoch!==visualEpoch)return;
       const cur=veh();
       if(hasDemo()&&cur.photoDataUrl===DEMO_PHOTO){
-        Object.assign(cur,{photoDataUrl:data,photoCut:true,usePhoto:true});
+        cur.photoCutDataUrl=png;
+        cur.photoCutModel=bgModelUsed||BG_MODELS[0].id;
+        setPhotoView(cur,'cut');
         commit();
       }
     }catch(err){
       demoPhotoFailed=true;
-      console.warn('Demo photo cutout skipped',err);
+      console.warn('[AutoCare] Demo photo cutout skipped (technical detail):',err&&err.stack?err.stack:err);
     }finally{
       demoPhotoJob=false;
     }
@@ -627,7 +890,7 @@
 
   /* ---------- Render ---------- */
   function render(){
-    $('#vName').textContent=S().name||T('myCar');
+    $('#vName').textContent=isConfigured()?(S().name||T('myCar')):T('noVehicle');
     $('#demo').hidden=!hasDemo();
     const sm=TL.summarize(state,today());
     renderVehicle();renderHero(sm);renderStats(sm);renderAlerts(sm);renderRems(sm);renderDocs();
@@ -683,18 +946,18 @@
       if(s.state!=='ok')items.push({sev:s.state==='over'?'bad':'warn',title:d.name,label:s.state==='over'?T('overdue'):T('soon'),detail:(s.days<0?T('docsExpired',{x:ago(-s.days)}):T('docsDue',{x:inn(s.days)}))+' · '+fdate(d.due,true),act:'doc-renew',id:d.id,btn:T('renew')})});
     items.sort((a,b)=>(a.sev==='bad'?0:1)-(b.sev==='bad'?0:1));
     if(!items.length){
-      $('#alerts').innerHTML='<div class="al-ok"><svg class="ico"><use href="#i-check"/></svg><span>'+T('noAlerts')+(unset?T('unsetItems',{n:unset}):'')+'.</span></div>';return}
+      $('#alerts').innerHTML='<div class="al-ok"><svg width="20" height="20" class="ico"><use href="#i-check"/></svg><span>'+T('noAlerts')+(unset?T('unsetItems',{n:unset}):'')+'.</span></div>';return}
     $('#alerts').innerHTML='<div class="card"><div class="card-h"><h2>'+T('attention')+'</h2><span class="pill '+(items[0].sev==='bad'?'over':'soon')+'">'+T('alertsCount',{n:items.length})+'</span></div><ul class="al-list">'
-      +items.map(i=>'<li class="al '+i.sev+'"><svg class="ico"><use href="#i-alert"/></svg><div><b>'+esc(i.title)+'</b><span class="d">'+esc(i.label)+' · '+esc(i.detail)+'</span></div><button class="btn sm" data-act="'+i.act+'" data-id="'+esc(i.id)+'">'+i.btn+'</button></li>').join('')+'</ul></div>';
+      +items.map(i=>'<li class="al '+i.sev+'"><svg width="20" height="20" class="ico"><use href="#i-alert"/></svg><div><b>'+esc(i.title)+'</b><span class="d">'+esc(i.label)+' · '+esc(i.detail)+'</span></div><button class="btn sm" data-act="'+i.act+'" data-id="'+esc(i.id)+'">'+i.btn+'</button></li>').join('')+'</ul></div>';
   }
 
   function renderRems(sm){
     const t=today();
-    let h='<div class="card-h"><h2>'+T('maintenance')+'</h2><button class="btn sm" data-act="rem-add"><svg class="ico" style="width:16px;height:16px"><use href="#i-plus"/></svg>'+T('add')+'</button></div>';
+    let h='<div class="card-h"><h2>'+T('maintenance')+'</h2><button class="btn sm" data-act="rem-add"><svg width="20" height="20" class="ico" style="width:16px;height:16px"><use href="#i-plus"/></svg>'+T('add')+'</button></div>';
     if(!state.reminders.length)h+='<p class="empty">'+T('noReminders')+'</p>';
     else h+='<div class="list">'+state.reminders.map(r=>{
       const s=TL.remStatus(r,sm.odo,S(),t,sm.rate);
-      const edit='<button class="btn sm" data-act="rem-edit" data-id="'+esc(r.id)+'" aria-label="'+esc(T('editRem',{n:r.name}))+'"><svg class="ico" style="width:16px;height:16px"><use href="#i-edit"/></svg></button>';
+      const edit='<button class="btn sm" data-act="rem-edit" data-id="'+esc(r.id)+'" aria-label="'+esc(T('editRem',{n:r.name}))+'"><svg width="20" height="20" class="ico" style="width:16px;height:16px"><use href="#i-edit"/></svg></button>';
       if(s.state==='unset')return'<article class="rem"><div class="rem-h"><b>'+esc(r.name)+'</b><span class="pill">'+T('noData')+'</span></div><div class="bar"><i style="width:0"></i></div><p class="rem-s">'+T('needLastChange')+'</p><div class="rem-a"><button class="btn sm" data-act="rem-edit" data-id="'+esc(r.id)+'">'+T('loadLastChange')+'</button></div></article>';
       const pill=s.state==='over'?T('overdue'):s.state==='soon'?T('soon'):T('upToDate');
       let m1='',m2='';
@@ -714,15 +977,15 @@
 
   function renderDocs(){
     const t=today();
-    let h='<div class="card-h"><h2>'+T('documentation')+'</h2><button class="btn sm" data-act="doc-add"><svg class="ico" style="width:16px;height:16px"><use href="#i-plus"/></svg>'+T('add')+'</button></div>';
+    let h='<div class="card-h"><h2>'+T('documentation')+'</h2><button class="btn sm" data-act="doc-add"><svg width="20" height="20" class="ico" style="width:16px;height:16px"><use href="#i-plus"/></svg>'+T('add')+'</button></div>';
     if(!state.docs.length)h+='<p class="empty">'+T('noDocs')+'</p>';
     else h+='<ul class="list">'+state.docs.map(d=>{
       const s=TL.docStatus(d,S(),t);
       const pill=s.state==='unset'?'<span class="pill">'+T('noDate')+'</span>':'<span class="pill '+s.state+'">'+(s.state==='over'?T('overdue'):s.state==='soon'?T('soon'):T('upToDate'))+'</span>';
       const dd=s.state==='unset'?T('addDueDate'):(s.days<0?T('docsExpired',{x:ago(-s.days)}):T('docsDue',{x:inn(s.days)}))+' · '+fdate(d.due,true);
-      return'<li class="doc"><svg class="ico"><use href="#i-doc"/></svg><div><b>'+esc(d.name)+pill+'</b><span class="d">'+esc(dd)+'</span></div>'
+      return'<li class="doc"><svg width="20" height="20" class="ico"><use href="#i-doc"/></svg><div><b>'+esc(d.name)+pill+'</b><span class="d">'+esc(dd)+'</span></div>'
         +'<button class="btn sm" data-act="'+(s.state==='unset'?'doc-edit':'doc-renew')+'" data-id="'+esc(d.id)+'">'+(s.state==='unset'?T('addDate'):T('renew'))+'</button>'
-        +'<button class="icon-btn" style="width:36px;height:36px" data-act="doc-edit" data-id="'+esc(d.id)+'" aria-label="'+esc(T('editDoc',{n:d.name}))+'"><svg class="ico" style="width:16px;height:16px"><use href="#i-edit"/></svg></button></li>';
+        +'<button class="icon-btn" style="width:36px;height:36px" data-act="doc-edit" data-id="'+esc(d.id)+'" aria-label="'+esc(T('editDoc',{n:d.name}))+'"><svg width="20" height="20" class="ico" style="width:16px;height:16px"><use href="#i-edit"/></svg></button></li>';
     }).join('')+'</ul>';
     $('#docs').innerHTML=h;
   }
@@ -798,7 +1061,7 @@
     const t=TL.catTotals(state.entries),keys=Object.keys(t).sort((a,b)=>t[b]-t[a]),mx=keys.length?t[keys[0]]:0;
     let h='<div class="card-h"><h2>'+T('catTitle')+'</h2></div>';
     if(!keys.length){$('#cats').innerHTML=h+'<p class="empty">'+T('catEmpty')+'</p>';return}
-    h+='<ul class="list">'+keys.map(k=>'<li class="cat"><svg class="ico"><use href="#'+CICON[k]+'"/></svg><span class="nm">'+T('cat.'+k)+'</span><span class="am">'+money(t[k],0)+'</span><div class="mb"><i style="width:'+(t[k]/mx*100).toFixed(1)+'%;background:'+GCOL[TL.CATS[k].g]+'"></i></div></li>').join('')+'</ul>';
+    h+='<ul class="list">'+keys.map(k=>'<li class="cat"><svg width="20" height="20" class="ico"><use href="#'+CICON[k]+'"/></svg><span class="nm">'+T('cat.'+k)+'</span><span class="am">'+money(t[k],0)+'</span><div class="mb"><i style="width:'+(t[k]/mx*100).toFixed(1)+'%;background:'+GCOL[TL.CATS[k].g]+'"></i></div></li>').join('')+'</ul>';
     $('#cats').innerHTML=h;
   }
 
@@ -816,7 +1079,7 @@
       if(e.type==='fuel'){const sg=segMap[e.id];title=T('loadTitle',{v:nf(vOut(e.vol),1),u:vU()});meta=fdate(e.date)+o+(e.full===false?' · '+T('partial'):'')+(sg?' · <em>'+nf(ed(sg.kmL),1)+' '+esc(el())+'</em>':'');val=money(e.cost||0)}
       else if(e.type==='odo'){title=T('odometer');meta=fdate(e.date);val=nf(dOut(e.odo))+' '+dU()}
       else{title=e.desc||T('cat.'+c);meta=T('cat.'+c)+' · '+fdate(e.date)+o;val=e.cost?money(e.cost):''}
-      return'<button class="row" data-act="edit-entry" data-id="'+esc(e.id)+'"><span class="ri"><svg class="ico"><use href="#'+(e.type==='odo'?'i-gauge':CICON[c])+'"/></svg></span><span><span class="rt">'+esc(title)+'</span><br><span class="rm">'+(e.type==='fuel'?meta:esc(meta))+'</span></span><span class="rv">'+esc(val)+'</span></button>';
+      return'<button class="row" data-act="edit-entry" data-id="'+esc(e.id)+'"><span class="ri"><svg width="20" height="20" class="ico"><use href="#'+(e.type==='odo'?'i-gauge':CICON[c])+'"/></svg></span><span><span class="rt">'+esc(title)+'</span><br><span class="rm">'+(e.type==='fuel'?meta:esc(meta))+'</span></span><span class="rv">'+esc(val)+'</span></button>';
     }).join('');
     if(list.length>hLimit)h+='<div class="more"><button class="btn sm" data-act="hist-more">'+T('viewMore',{n:list.length-hLimit})+'</button></div>';
     $('#hist').innerHTML=h;
@@ -834,21 +1097,26 @@
   function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('on'),2400)}
   const nv=id=>{const e=document.getElementById(id);return e?e.valueAsNumber:NaN};
   const sv=id=>{const e=document.getElementById(id);return e?e.value.trim():''};
-  function head(title){return'<div class="sh-head"><h2 id="shT">'+title+'</h2><button class="icon-btn" type="button" data-close aria-label="'+T('close')+'"><svg class="ico"><use href="#i-x"/></svg></button></div>'}
+  function head(title){return'<div class="sh-head"><h2 id="shT">'+title+'</h2><button class="icon-btn" type="button" data-close aria-label="'+T('close')+'"><svg width="20" height="20" class="ico"><use href="#i-x"/></svg></button></div>'}
 
   /* ---------- Modal de edición rápida del vehículo ---------- */
   function vehicleTools(v){
     const photo=isPhotoActive(v),has=hasPhoto(v);
-    return'<label class="btn sm ghost" for="v-photo"><svg class="ico"><use href="#i-camera"/></svg>'+T(has?'changePhoto':'uploadPhoto')+'</label>'
+    return'<label class="btn sm ghost" for="v-photo"><svg width="20" height="20" class="ico"><use href="#i-camera"/></svg>'+T(has?'changePhoto':'uploadPhoto')+'</label>'
       +'<input id="v-photo" type="file" accept="image/*" hidden>'
-      +(has?'<button type="button" class="btn sm ghost" id="v-toggle-view"><svg class="ico"><use href="#i-'+(photo?'cube':'camera')+'"/></svg>'+T(photo?'useBlueprint':'useMyPhoto')+'</button>'
+      +(has?'<button type="button" class="btn sm ghost" id="v-toggle-view"><svg width="20" height="20" class="ico"><use href="#i-'+(photo?'cube':'camera')+'"/></svg>'+T(photo?'useBlueprint':'useMyPhoto')+'</button>'
+        +((v.photoOriginal||v.photoCutDataUrl)?'<button type="button" class="btn sm ghost" id="v-cut-toggle"><svg width="20" height="20" class="ico"><use href="#i-'+(v.photoCut&&!isStaleCut(v)?'camera':'cube')+'"/></svg>'+T(v.photoCut&&!isStaleCut(v)?'originalPhoto':'cutoutAI')+'</button>':'')
         +'<button type="button" class="btn sm ghost" id="v-del-photo">'+T('removePhoto')+'</button>':'');
   }
   function openVehicle(){
     sheetKind='vehicle';const d=Object.assign({},veh());vehicleDraft=d;
     const paint=()=>{const p=$('#v-preview');if(p)p.innerHTML=stageHTML(d)};
     const tools=()=>{const t=$('#v-tools');if(t)t.innerHTML=vehicleTools(d)};
-    const sync=()=>{Object.assign(veh(),{brand:d.brand,model:d.model,year:d.year,body:d.body,color:d.color,photoDataUrl:d.photoDataUrl,photoCut:!!d.photoCut,usePhoto:!!d.usePhoto});state.settings.name=(d.brand+' '+d.model).trim()||state.settings.name;commit()};
+    const sync=()=>{markConfigured();Object.assign(veh(),{brand:d.brand,model:d.model,year:d.year,body:d.body,color:d.color,
+      photoDataUrl:d.photoDataUrl,photoOriginal:d.photoOriginal,photoFallback:d.photoFallback,photoCutDataUrl:d.photoCutDataUrl,
+      photoCutModel:d.photoCutModel||null,
+      photoCut:!!d.photoCut,photoCutWanted:d.photoCutWanted!==false,photoView:d.photoView||'fallback',usePhoto:!!d.usePhoto,empty:false});
+      state.settings.name=(d.brand+' '+d.model).trim()||T('myCar');commit()};
     const other=BRANDS.indexOf(d.brand)<0;
     const colors=COLORS.map(c=>'<label class="col"><input type="radio" name="v-color" value="'+c.id+'"'+(d.color===c.id?' checked':'')+'><span><i style="background:linear-gradient(135deg,'+c.light+' 0%,'+c.hex+' 55%,'+c.dark+' 100%)"></i>'+esc(T('color.'+c.id))+'</span></label>').join('');
     openSheet(head(T('editVehicle'))+'<form id="frm" novalidate>'
@@ -871,7 +1139,11 @@
     $('#frm').addEventListener('change',e=>{if(e.target.name==='v-color'){d.color=e.target.value;paint();sync()}});
     $('#v-tools').addEventListener('click',e=>{
       if(e.target.closest('#v-toggle-view')){d.usePhoto=!d.usePhoto;paint();tools();sync()}
-      if(e.target.closest('#v-del-photo')){d.photoDataUrl=null;d.photoCut=false;d.usePhoto=false;paint();tools();sync();toast(T('photoRemoved'))}
+      if(e.target.closest('#v-cut-toggle'))toggleCutout(true,paint,tools);
+      if(e.target.closest('#v-del-photo')){
+        ['photoDataUrl','photoOriginal','photoFallback','photoCutDataUrl','photoCutModel','photoCut','photoCutWanted','photoView','usePhoto'].forEach(k=>{d[k]=k==='photoCutWanted'?true:(k==='photoView'?'fallback':null)});
+        paint();tools();sync();toast(T('photoRemoved'))
+      }
     });
     $('#v-tools').addEventListener('change',e=>{if(e.target.id==='v-photo')handlePhoto(e.target.files&&e.target.files[0],true,paint,tools)});
     $('#frm').addEventListener('submit',e=>{
@@ -888,6 +1160,15 @@
 
   function armDelete(btn,fn){
     btn.addEventListener('click',()=>{if(btn.classList.contains('armed')){fn();return}btn.classList.add('armed');btn.textContent=T('confirmDelete');setTimeout(()=>{if(btn.isConnected){btn.classList.remove('armed');btn.textContent=T('delete')}},4000)});
+  }
+
+  /* Reinicio usado por "Borrar todos los datos" y por "Empezar con mis datos". */
+  function resetAll(message){
+    state=store.wipe();
+    if(typeof AC.clearVisuals==='function')AC.clearVisuals();
+    commit();
+    closeSheet();
+    toast(message||T('delDone'));
   }
 
   /* ---------- Formulario de registros ---------- */
@@ -1103,7 +1384,7 @@
         $('#impGo').addEventListener('click',()=>{state=store.set(pendingImport);pendingImport=null;state.updatedAt=Date.now();store.commit(render);closeSheet();toast(T('importDone'))});
       });
     });
-    armDelete($('#delAll'),()=>{const keep=Object.assign({},state.settings),keepVeh=Object.assign({},state.vehicle);state=store.set(TL.defaults());state.settings=keep;state.vehicle=keepVeh;commit();closeSheet();toast(T('delDone'))});
+    armDelete($('#delAll'),()=>resetAll(T('delDone')));
   }
 
   /* ---------- Eventos globales ---------- */
@@ -1111,12 +1392,13 @@
     'add-fuel':()=>openEntry('fuel'),'add-exp':()=>openEntry('exp'),'add-odo':()=>openEntry('odo'),
     'settings':openSettings,'edit-vehicle':()=>openVehicle(),
     'veh-view-toggle':()=>{const v=veh();if(!v.photoDataUrl)return;v.usePhoto=!v.usePhoto;commit();toast(T(v.usePhoto?'photoReady':'blueprintReady'))},
+    'veh-cut-toggle':()=>toggleCutout(false),
     'edit-entry':id=>{const e=state.entries.find(x=>x.id===id);if(e)openEntry(e.type==='fuel'?'fuel':e.type==='odo'?'odo':'exp',e)},
     'rem-add':()=>openReminder(),'rem-edit':id=>openReminder(id),
     'rem-log':id=>{const r=state.reminders.find(x=>x.id===id);if(r)openEntry('exp',null,{cat:r.cat,desc:r.name,remId:r.id})},
     'doc-add':()=>openDoc(),'doc-edit':id=>openDoc(id),'doc-renew':id=>openRenew(id),
     'hist-more':()=>{hLimit+=20;renderHist()},
-    'clear-demo':()=>{store.clearDemo();commit();toast(T('dataCleared'))}
+    'clear-demo':()=>resetAll(T('dataCleared'))
   };
   document.addEventListener('click',e=>{
     if(e.target.closest('[data-close]')){closeSheet();return}
@@ -1126,7 +1408,7 @@
   document.addEventListener('change',e=>{
     const i=e.target;if(!i||!i.matches)return;
     if(i.matches('input[data-act="hist-f"]')){hFilter=i.value;hLimit=12;renderHist()}
-    if(i.id==='vehPhoto'){handlePhoto(i.files&&i.files[0]);i.value=''}
+    if(i.id==='vehPhoto'||i.id==='vehPhotoEmpty'){handlePhoto(i.files&&i.files[0]);i.value=''}
   });
   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#sheet').hidden)closeSheet()});
 
@@ -1135,9 +1417,9 @@
   AC.generateBlueprintFromPhoto=generateBlueprintFromPhoto;
   document.addEventListener('ac:langchange',()=>{if(store.setSync)store.setSync(store.syncKind());render()});
 
-  AC.i18n.apply();
+  I18N.apply();
   const langSel=$('#langSel');
-  if(langSel){langSel.value=AC.i18n.lang;langSel.addEventListener('change',e=>{AC.i18n.set(e.target.value);e.target.value=AC.i18n.lang})}
+  if(langSel){langSel.value=I18N.lang;langSel.addEventListener('change',e=>{I18N.set(e.target.value);e.target.value=I18N.lang})}
   initTabs();
   render();
   initTilt();

@@ -1,9 +1,21 @@
 /* AutoCare · Service Worker · caché para uso sin conexión / offline cache */
 'use strict';
 
-const CACHE = 'autocare-v1.1.0';
-/* CDNs permitidos para el módulo y los pesos WASM/ONNX del recorte de fondo */
-const AI_CDN = /^(?:.+\.)?(?:esm\.sh|jsdelivr\.net|imgly\.com|staticimgly\.com)$/i;
+const CACHE = 'autocare-v1.2.4';
+/* El recorte IA carga modulos y pesos desde estos CDNs. El service worker NO
+   debe interceptarlos: un cache outage (o una respuesta HTML del offline
+   fallback) rompe la carga de WASM/ONNX y deja el recorte en fallback. */
+const AI_CDN_HOSTS = new Set([
+  'cdn.jsdelivr.net',
+  'huggingface.co',
+  'cdn-lfs.huggingface.co',
+  'cdn-lfs-us-1.huggingface.co',
+  'cdn-lfs-eu-1.huggingface.co'
+]);
+function isAICdn(host) {
+  const h = String(host || '').toLowerCase();
+  return AI_CDN_HOSTS.has(h) || h.endsWith('.huggingface.co');
+}
 const CORE = [
   './',
   './index.html',
@@ -26,6 +38,32 @@ const CORE = [
   './js/storage.js',
   './js/app.js'
 ];
+
+/* URLs de la app: nunca se borran al purgar imágenes de usuario. */
+const CORE_URLS = new Set(CORE.map(p => new URL(p, self.location.href).href));
+const IMAGE_RE = /\.(?:png|jpe?g|gif|webp|avif|bmp|svg)(?:$|\?)/i;
+function isUserImageRequest(req) {
+  try {
+    const u = new URL(req.url);
+    if (CORE_URLS.has(u.href) || /\/icons\//i.test(u.pathname)) return false;
+    return req.destination === 'image' || IMAGE_RE.test(u.pathname);
+  } catch (e) { return false; }
+}
+async function purgeUserImages() {
+  const names = await caches.keys();
+  await Promise.all(names.map(async name => {
+    const cache = await caches.open(name);
+    const requests = await cache.keys();
+    await Promise.all(requests.filter(isUserImageRequest).map(req => cache.delete(req).catch(() => {})));
+  }));
+}
+
+/* Solicitado por storage.wipe(): limpia cualquier imagen cacheada al borrar todos los datos. */
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'AC_PURGE_USER_IMAGES') {
+    event.waitUntil(purgeUserImages());
+  }
+});
 
 self.addEventListener('install', event => {
   event.waitUntil(
@@ -53,7 +91,9 @@ self.addEventListener('fetch', event => {
   let url;
   try { url = new URL(req.url); } catch (e) { return; }
   const crossOrigin = url.origin !== self.location.origin;
-  if (crossOrigin && !AI_CDN.test(url.hostname)) return;
+  /* Peticiones externas: directo a la red, sin cache ni interceptacion.
+     Solo se gestionan aqui las URLs propias de la app. */
+  if (crossOrigin) return;
 
   /* HTML: primero la red, siempre la versión más reciente. */
   const isHTML = !crossOrigin && (req.mode === 'navigate' || (req.headers.get('accept') || '').indexOf('text/html') >= 0);
@@ -72,8 +112,8 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  /* Recursos propios y pesos WASM/ONNX del CDN de IA: caché primero,
-     con actualización silenciosa en segundo plano cuando hay conexión. */
+  /* Recursos propios de la app: caché primero, con actualización
+     silenciosa en segundo plano cuando hay conexión. */
   event.respondWith(
     caches.match(req).then(cached => {
       const network = fetch(req).then(res => {
