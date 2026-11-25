@@ -1,7 +1,7 @@
 /* AutoCare · Service Worker · caché para uso sin conexión / offline cache */
 'use strict';
 
-const CACHE = 'autocare-v1.2.4';
+const CACHE = 'autocare-v1.3.8';
 /* El recorte IA carga modulos y pesos desde estos CDNs. El service worker NO
    debe interceptarlos: un cache outage (o una respuesta HTML del offline
    fallback) rompe la carga de WASM/ONNX y deja el recorte en fallback. */
@@ -36,7 +36,8 @@ const CORE = [
   './js/i18n/ru.js',
   './js/i18n/ja.js',
   './js/storage.js',
-  './js/app.js'
+  './js/app.js',
+  './js/bg-worker.js'
 ];
 
 /* URLs de la app: nunca se borran al purgar imágenes de usuario. */

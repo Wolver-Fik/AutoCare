@@ -12,9 +12,12 @@
   <meta name="apple-mobile-web-app-title" content="AutoCare">
   <title data-i18n="appTitle">Vehicle dashboard</title>
   <link rel="manifest" href="./manifest.webmanifest">
-  <!-- La segmentación se carga bajo demanda; el Service Worker cachea el módulo
-       y sus pesos WASM/ONNX para reutilizarlos sin conexión. -->
+  <!-- La segmentación IA se ejecuta 100 % en js/bg-worker.js (Web Worker): la UI
+       nunca se congela durante la inferencia. El Service Worker cachea el Worker
+       y, cuando el contexto es seguro, también los pesos WASM/ONNX. -->
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="preconnect" href="https://huggingface.co" crossorigin>
+  <link rel="preconnect" href="https://cdn-lfs.huggingface.co" crossorigin>
   <link rel="apple-touch-icon" href="./icons/icon-180.png">
   <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap">
@@ -107,6 +110,7 @@
     <section class="view" id="view-mantenimiento" role="tabpanel" aria-labelledby="tab-mantenimiento" hidden>
       <section class="card a-rem" id="rems" data-i18n-aria="ariaReminders" aria-label="Preventive maintenance"></section>
       <section class="card a-docs" id="docs" data-i18n-aria="ariaDocs" aria-label="Documents and due dates"></section>
+      <section class="card a-quick" id="quick" data-i18n-aria="ariaQuick" aria-label="Key components"></section>
     </section>
 
     <section class="view" id="view-analisis" role="tabpanel" aria-labelledby="tab-analisis" hidden>
@@ -114,6 +118,8 @@
       <section class="card a-spend" id="spend" data-i18n-aria="ariaSpend" aria-label="Spending per month"></section>
       <section class="card a-cats" id="cats" data-i18n-aria="ariaCats" aria-label="Where the money goes"></section>
       <section class="card a-hist" id="hist" data-i18n-aria="ariaHist" aria-label="Full history"></section>
+      <section class="card a-cost" id="cost" data-i18n-aria="ariaCost" aria-label="Real cost per distance"></section>
+      <section class="card a-compare" id="compare" data-i18n-aria="ariaCompare" aria-label="Month over month comparison"></section>
     </section>
   </main>
 

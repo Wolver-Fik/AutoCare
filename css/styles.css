@@ -22,7 +22,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font:400 15px/1.45 var(--f-bo
 body.lock{overflow:hidden}
 h1,h2,h3,p,ul{margin:0;padding:0}
 ul{list-style:none}
-button{font:inherit;color:inherit;cursor:pointer}
+button{font:inherit;color:inherit;cursor:pointer;touch-action:manipulation}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .ico{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
 .wrap{max-width:1120px;margin:0 auto}
@@ -67,7 +67,8 @@ button{font:inherit;color:inherit;cursor:pointer}
   background:var(--s1);border:1px solid var(--line);border-radius:14px}
 .mainnav button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
   min-width:0;min-height:52px;padding:5px 4px;border:0;border-radius:10px;background:none;color:var(--fg2);
-  font-size:clamp(10.5px,3vw,13px);font-weight:600;line-height:1.1;text-align:center;overflow-wrap:anywhere}
+  font-size:clamp(10.5px,3vw,13px);font-weight:600;line-height:1.1;text-align:center;white-space:nowrap;hyphens:none}
+.mainnav button span{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;hyphens:none}
 .mainnav button .ico{width:18px;height:18px}
 .mainnav button[aria-selected=true]{background:var(--accent);color:#06121f}
 .mainnav button[aria-selected=true] .ico{stroke-width:2}
@@ -80,6 +81,26 @@ button{font:inherit;color:inherit;cursor:pointer}
 .btn.sm{min-height:36px;padding:0 12px;font-size:14px;border-radius:10px}
 .btn.danger{color:#ff9a9a;border-color:rgba(208,59,59,.5)}
 .btn.danger.armed{background:var(--bad);color:#fff;border-color:var(--bad)}
+/* Móvil: etiquetas compactas, sin guiones partidos ni desbordamiento horizontal */
+.btn,.chip span,.tabs button,.act,.garage-add,.pill,.g-cap,.cost-line,.cmp-row{white-space:nowrap;hyphens:none}
+@media(max-width:639px){
+  .mainnav{gap:3px;padding:4px}
+  .mainnav button{font-size:11px;padding:5px 2px}
+  .btn.sm,.btn.sm.ghost{padding:0 9px;font-size:12.5px}
+  .garage-add{padding:0 8px}
+  .garage-add span{display:none}
+}
+
+/* ---------- Garaje multi-vehículo ---------- */
+.garage-bar{display:flex;align-items:center;gap:8px;min-width:0;margin-bottom:12px}
+.garage-sel{display:flex;align-items:center;gap:6px;flex:1 1 auto;min-width:0;height:38px;padding:0 8px 0 10px;border-radius:10px;background:var(--s2);border:1px solid var(--line2);color:var(--fg2)}
+.garage-sel .ico{width:17px;height:17px}
+.garage-sel select{flex:1 1 auto;width:100%;min-width:0;height:100%;border:0;background:transparent;color:var(--fg);font:600 13px/1 var(--f-body);appearance:none;-webkit-appearance:none;outline:none}
+.garage-sel select option{background:var(--s1);color:var(--fg)}
+.garage-count{flex:none;display:grid;place-items:center;min-width:24px;height:24px;padding:0 6px;border-radius:99px;background:var(--accent-soft);color:var(--accent);font:600 12px/1 var(--f-cond)}
+.garage-add{flex:none;min-height:38px}
+.garage-del{flex:none;width:38px;height:38px;border-radius:10px}
+@media(max-width:400px){.garage-bar{gap:6px}.garage-sel{padding-left:8px}.garage-sel .ico{display:none}}
 
 /* Cada pestaña tiene su propia cuadrícula */
 .view{display:grid;gap:14px;grid-template-columns:minmax(0,1fr)}
@@ -87,11 +108,13 @@ button{font:inherit;color:inherit;cursor:pointer}
 @media(min-width:900px){
   .view{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
   #view-tablero{grid-template-areas:"vehicle vehicle" "hero stats" "actions actions" "alerts alerts"}
-  #view-mantenimiento{grid-template-areas:"rem docs"}
-  #view-analisis{grid-template-areas:"eff spend" "cats hist"}
+  #view-mantenimiento{grid-template-areas:"rem docs" "quick quick"}
+  #view-analisis{grid-template-areas:"eff spend" "cats hist" "cost compare"}
 }
 .a-vehicle{grid-area:vehicle}.a-hero{grid-area:hero}.a-stats{grid-area:stats}.a-actions{grid-area:actions}.a-alerts{grid-area:alerts}
-.a-rem{grid-area:rem}.a-docs{grid-area:docs}.a-eff{grid-area:eff}.a-spend{grid-area:spend}.a-cats{grid-area:cats}.a-hist{grid-area:hist}
+.a-rem{grid-area:rem}.a-docs{grid-area:docs}.a-quick{grid-area:quick}
+.a-eff{grid-area:eff}.a-spend{grid-area:spend}.a-cats{grid-area:cats}.a-hist{grid-area:hist}
+.a-cost{grid-area:cost}.a-compare{grid-area:compare}
 
 .card{background:var(--s1);border:1px solid var(--line);border-radius:16px;padding:16px}
 .card-h{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
@@ -141,13 +164,21 @@ button{font:inherit;color:inherit;cursor:pointer}
 .veh-stage.pano::before{opacity:.2}
 .veh-stage.cut::before{opacity:.85;filter:blur(9px)}
 .veh-badge{position:absolute;top:10px;left:10px;z-index:3;display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:99px;
-  background:rgba(6,12,20,.7);border:1px solid rgba(255,255,255,.16);font:600 10.5px/1 var(--f-body);letter-spacing:.09em;color:#dce9fa;backdrop-filter:blur(6px)}
+  background:rgba(6,12,20,.7);border:1px solid rgba(255,255,255,.16);font:600 10.5px/1 var(--f-body);letter-spacing:.09em;color:#dce9fa}
 .veh-badge .ico{width:13px;height:13px}
 .veh-progress{position:absolute;right:10px;bottom:10px;z-index:5;display:inline-flex;align-items:center;gap:8px;
   max-width:calc(100% - 20px);padding:6px 10px;border-radius:99px;border:1px solid rgba(190,220,255,.18);
-  background:rgba(8,14,22,.82);backdrop-filter:blur(8px);color:#eaf3ff;font:600 11.5px/1.2 var(--f-body);letter-spacing:.01em;
+  background:rgba(8,14,22,.94);color:#eaf3ff;font:600 11.5px/1.2 var(--f-body);letter-spacing:.01em;
   box-shadow:0 6px 18px rgba(0,0,0,.35);pointer-events:none}
 .veh-progress b{min-width:30px;color:#9ccbff;font-variant-numeric:tabular-nums;text-align:right}
+/* El indicador no captura toques, pero "Cancelar" sí: sigue siendo pulsable
+   aunque el modelo esté consumiendo el Worker al 100 %. */
+.veh-progress-cancel{position:relative;z-index:6;flex:none;pointer-events:auto;touch-action:manipulation;
+  min-height:28px;padding:0 9px;margin:-2px -4px -2px 2px;border-radius:99px;
+  border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.1);color:#fff;
+  font:600 11px/1 var(--f-body);white-space:nowrap;user-select:none;-webkit-user-select:none}
+.veh-progress-cancel:hover{background:rgba(255,255,255,.2)}
+.veh-progress-cancel:active{background:rgba(255,120,120,.38);border-color:rgba(255,150,150,.6)}
 .veh-progress-spin{width:13px;height:13px;flex:none;border-radius:50%;border:2px solid rgba(255,255,255,.22);border-top-color:#7db8ff;animation:veh-spin .8s linear infinite}
 @keyframes veh-spin{to{transform:rotate(360deg)}}
 /* Plano HUD / Blueprint: contornos reales extraídos de la foto */
@@ -248,6 +279,48 @@ details.tbl summary{cursor:pointer;padding:4px 0}
 .chip input:checked+span{background:var(--accent-soft);border-color:var(--accent);color:#fff}
 .chip input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
 .hist-f{margin-bottom:10px}
+
+/* ---------- Ficha rápida de componentes y documentos ---------- */
+.quick-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
+.quick-grid h3{font:600 15px/1.2 var(--f-cond);letter-spacing:.06em;text-transform:uppercase;color:var(--fg2);margin-bottom:10px}
+.quick-list{gap:8px}
+.quick-row{display:flex;align-items:center;gap:10px;min-width:0;padding:10px 12px;background:var(--s2);border:1px solid var(--line);border-radius:12px}
+.quick-row>div{flex:1 1 auto;min-width:0}
+.quick-row b{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-weight:600}
+.quick-row .d{display:block;font-size:12.5px;color:var(--fg2);overflow-wrap:anywhere}
+.quick-row .qi{display:grid;place-items:center;width:34px;height:34px;flex:none;border-radius:10px;background:var(--s3);color:var(--fg2)}
+.quick-row .qi .ico{width:18px;height:18px}
+.quick-row .btn{flex:none}
+@media(max-width:760px){.quick-grid{grid-template-columns:minmax(0,1fr)}}
+
+/* ---------- Costo real y comparación mensual ---------- */
+.cost-big{font:600 clamp(34px,8vw,52px)/1 var(--f-cond);color:var(--fg);margin:4px 0 14px;font-variant-numeric:tabular-nums}
+.cost-big small{font:500 16px var(--f-body);color:var(--fg2);margin-left:4px}
+.cost-lines{display:grid;gap:6px;margin-bottom:10px}
+.cost-line{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;padding:7px 10px;border-radius:9px;background:var(--s2);font-size:13px;color:var(--fg2)}
+.cost-line>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.cost-line b{color:var(--fg);font-variant-numeric:tabular-nums;flex:none}
+.cmp-head{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:8px;margin-bottom:12px}
+.cmp-head>div:last-child{text-align:right}
+.cmp-head b{display:block;font:600 clamp(18px,4.5vw,26px)/1.2 var(--f-cond);font-variant-numeric:tabular-nums}
+.cmp-delta{padding:5px 10px;border-radius:99px;background:var(--s2);border:1px solid var(--line2);font-size:12px;font-weight:600;color:var(--fg2);white-space:nowrap}
+.cmp-delta.ok{color:var(--ok);border-color:rgba(12,163,12,.4)}
+.cmp-delta.over{color:var(--bad);border-color:rgba(208,59,59,.4)}
+.cmp-legend,.cmp-row{display:grid;grid-template-columns:minmax(70px,1fr) minmax(40px,1.4fr) auto auto;align-items:center;gap:8px}
+.cmp-legend{font-size:11px;color:var(--fg3);margin-bottom:4px}
+.cmp-row{padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
+.cmp-row:last-child{border-bottom:0}
+.cmp-name{overflow:hidden;text-overflow:ellipsis}
+.cmp-bar{height:7px;border-radius:99px;background:var(--s3);overflow:hidden}
+.cmp-bar i{display:block;height:100%;border-radius:99px;background:var(--accent)}
+.cmp-row b{font-variant-numeric:tabular-nums;text-align:right}
+.cmp-prev{font-size:12px;color:var(--fg3);font-variant-numeric:tabular-nums;text-align:right}
+@media(max-width:480px){
+  .cmp-head{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .cmp-delta{grid-column:1/3;grid-row:2;justify-self:center;white-space:normal;text-align:center}
+  .cmp-legend,.cmp-row{grid-template-columns:minmax(60px,1fr) minmax(30px,1fr) auto;gap:6px}
+  .cmp-legend span:first-child,.cmp-prev{display:none}
+}
 .row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;width:100%;text-align:left;padding:11px 4px;background:none;border:0;border-bottom:1px solid var(--line);border-radius:0}
 .row:hover{background:var(--s2)}
 .row .ri{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;background:var(--s3);color:var(--fg2)}
@@ -257,12 +330,15 @@ details.tbl summary{cursor:pointer;padding:4px 0}
 .row .rv{font-variant-numeric:tabular-nums;font-weight:600;text-align:right}
 .more{margin-top:12px;display:flex;justify-content:center}
 
-/* ---------- Hoja modal ---------- */
-.sheet-wrap{position:fixed;inset:0;z-index:50;display:flex;align-items:flex-end;justify-content:center}
-.scrim{position:absolute;inset:0;background:rgba(3,6,10,.72)}
-.sheet{position:relative;width:100%;max-width:520px;max-height:92vh;max-height:92dvh;overflow:auto;background:var(--s1);border:1px solid var(--line2);border-radius:20px 20px 0 0;
+/* ---------- Hoja modal ----------
+   Contenedor plano y estable para WebKit móvil: una sola área de scroll en el
+   wrapper, sin backdrop-filter, sin position:sticky y sin scroll anidado. */
+.sheet-wrap{position:fixed;inset:0;z-index:50;display:flex;align-items:flex-start;justify-content:center;
+  overflow-y:auto;-webkit-overflow-scrolling:touch;
+  padding:12px max(12px,env(safe-area-inset-right,0px)) calc(16px + env(safe-area-inset-bottom,0px)) max(12px,env(safe-area-inset-left,0px))}
+.scrim{position:fixed;inset:0;background:rgba(3,6,10,.72)}
+.sheet{position:relative;z-index:1;width:100%;max-width:520px;background:var(--s1);border:1px solid var(--line2);border-radius:20px;
   padding:18px max(18px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) max(18px,env(safe-area-inset-left,0px))}
-@media(min-width:640px){.sheet-wrap{align-items:center}.sheet{border-radius:20px}}
 .sh-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
 .sh-head h2{font:600 24px/1.1 var(--f-cond);letter-spacing:.03em}
 .tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;padding:4px;background:var(--s2);border-radius:12px;margin-bottom:14px}
@@ -285,8 +361,12 @@ form{display:grid;gap:14px}
 .prev b{color:var(--fg)}
 .prev.warn{color:var(--warn)}
 .form-err{color:#ff9a9a;font-size:14px;min-height:0}
-.sh-foot{display:flex;flex-wrap:wrap;gap:10px;justify-content:flex-end;margin-top:2px}
+/* Pie en flujo normal: Guardar/Cancelar viajan con el formulario. Nada de
+   sticky: en iOS Safari provoca pérdida total de respuesta táctil. */
+.sh-foot{display:flex;flex-wrap:wrap;gap:10px;justify-content:flex-end;margin-top:2px;
+  padding:10px 0 calc(2px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--line)}
 .sh-foot .sp{flex:1}
+.sh-foot .btn{pointer-events:auto;touch-action:manipulation}
 .sec{padding-top:14px;border-top:1px solid var(--line);display:grid;gap:10px}
 .sec h3{font:600 18px var(--f-cond);letter-spacing:.04em;text-transform:uppercase}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translate(-50%,20px);opacity:0;pointer-events:none;z-index:60;background:var(--s3);border:1px solid var(--line2);padding:10px 16px;border-radius:99px;font-size:14px;transition:.2s;max-width:calc(100vw - 32px)}

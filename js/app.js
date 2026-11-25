@@ -56,6 +56,20 @@
     return{state:days<0?'over':days<=S.warnDays?'soon':'ok',days};
   }
 
+  /* Costo real por distancia: combustible + mantenimiento/reparaciones entre
+     los kilómetros efectivamente registrados (max − min del odómetro). */
+  function costPerDistance(E){
+    let cost=0,min=null,max=null;
+    E.forEach(e=>{
+      const g=e.type==='fuel'?'fuel':(e.cat&&AC.core.CATS[e.cat]?AC.core.CATS[e.cat].g:'');
+      if(g==='fuel'||g==='maint'||g==='repair')cost+=e.cost||0;
+    });
+    E.forEach(e=>{if(AC.core.hasOdo(e)){if(min==null||e.odo<min)min=e.odo;if(max==null||e.odo>max)max=e.odo}});
+    let dist=(min!=null&&max>min)?max-min:0;
+    if(!(dist>0))fuelSegments(E).forEach(s=>{dist+=s.dist});
+    return{cost,dist,value:dist>0?cost/dist:null};
+  }
+
   function summarize(st,today){
     const E=st.entries,odo=currentOdo(E),segs=fuelSegments(E);
     let dist=0,vol=0,best=null;segs.forEach(s=>{dist+=s.dist;vol+=s.vol;best=best==null?s.kmL:Math.max(best,s.kmL)});
@@ -68,7 +82,7 @@
     if(fuels.length>=2){const a=fuels[0],b=fuels[fuels.length-1],d=b.odo-a.odo;
       if(d>0){let c=0;E.forEach(e=>{if(e!==a&&e.date>=a.date&&e.date<=b.date)c+=e.cost||0});cpk=c/d}}
     let lastDate=null;E.forEach(e=>{if(AC.core.hasOdo(e)&&(lastDate==null||e.date>lastDate))lastDate=e.date});
-    return{odo,segs,avg,last,best,total,monthCost,prevCost,cpk,rate:dailyRate(E),lastDate,count:E.length};
+    return{odo,segs,avg,last,best,total,monthCost,prevCost,cpk,cpd:costPerDistance(E),rate:dailyRate(E),lastDate,count:E.length};
   }
 
   function monthlySpend(E,today,n){
@@ -89,7 +103,7 @@
   }
 
   /* Fachada única: mismas funciones que había en el index original */
-  const TL=Object.assign({},AC.core,{currentOdo,fuelSegments,effDisp,effLabel,dailyRate,remStatus,docStatus,summarize,monthlySpend,catTotals,niceTicks});
+  const TL=Object.assign({},AC.core,{currentOdo,fuelSegments,costPerDistance,effDisp,effLabel,dailyRate,remStatus,docStatus,summarize,monthlySpend,catTotals,niceTicks});
 
   /* ---------- Utilidades de interfaz ---------- */
   const $=s=>document.querySelector(s);
@@ -103,7 +117,7 @@
 
   /* ---------- Ficha visual del vehículo · showroom premium ---------- */
   const BRANDS=AC.core.BRANDS, BODIES=AC.core.BODIES, COLORS=AC.core.COLORS;
-  let svgSeq=0,vehicleDraft=null,bgModPromise=null,demoPhotoJob=false,demoPhotoFailed=false;
+  let svgSeq=0,vehicleDraft=null,demoPhotoJob=false,demoPhotoFailed=false;
   const DEMO_PHOTO=AC.core.DEMO_PHOTO||'./icons/demo-car.png';
   const EMPTY_VEHICLE=AC.core.EMPTY_VEHICLE||{brand:'',model:'',year:'',body:'hatch',color:'#F8FAFC',photoDataUrl:null,photoCut:false,usePhoto:false,empty:true};
 
@@ -241,7 +255,8 @@
   function clearVehicleVisuals(){
     visualEpoch++;
     BP_CACHE.clear();BP_PENDING.clear();BP_FAILED.clear();
-    demoPhotoJob=false;demoPhotoFailed=false;bgModPromise=null;bgPipePromise=null;bgPipeKey='';bgPipeFailures=Object.create(null);cutInFlight=null;vehicleDraft=null;
+    demoPhotoJob=false;demoPhotoFailed=false;cutInFlight=null;vehicleDraft=null;
+    killAIWorker();failActiveJob(cutError(true));
     document.querySelectorAll('.veh-bp-img,.veh-cutout,.veh-progress').forEach(el=>el.remove());
   }
   AC.clearVisuals=clearVehicleVisuals;
@@ -433,6 +448,19 @@
     return'<div class="veh-visual"><div class="veh-stage'+cls+'">'+badge+vehicleVisual(v)+'</div></div>';
   }
 
+  /* Selector compacto del garaje: siempre visible, también con el estado en blanco. */
+  function garageBarHTML(){
+    const list=store.garage.list(),active=store.garage.activeId();
+    const opts=list.map(r=>'<option value="'+esc(r.id)+'"'+(r.id===active?' selected':'')+'>'+esc(r.label)+'</option>').join('');
+    return'<div class="garage-bar">'
+      +'<label class="garage-sel"><svg width="18" height="18" class="ico"><use href="#i-car"/></svg><span class="sr-only">'+esc(T('garageSelect'))+'</span>'
+      +'<select id="garageSel" data-i18n-aria="garageSelect" aria-label="'+esc(T('garageSelect'))+'">'+opts+'</select></label>'
+      +'<span class="garage-count" title="'+esc(T('garageCount',{n:list.length}))+'">'+list.length+'</span>'
+      +'<button type="button" class="btn sm ghost garage-add" data-act="veh-add" data-i18n-title="addVehicle" title="'+esc(T('addVehicle'))+'" aria-label="'+esc(T('addVehicle'))+'"><svg width="20" height="20" class="ico"><use href="#i-plus"/></svg><span>'+T('addVehicle')+'</span></button>'
+      +'<button type="button" class="icon-btn garage-del" data-act="veh-del" data-i18n-title="deleteVehicle" title="'+esc(T('deleteVehicle'))+'" aria-label="'+esc(T('deleteVehicle'))+'"><svg width="20" height="20" class="ico"><use href="#i-x"/></svg></button>'
+      +'</div>';
+  }
+
   /* Estado en blanco: silueta genérica + invitación explícita a configurar nombre y foto. */
   function emptyStageHTML(){
     return'<div class="veh-visual"><div class="veh-stage blueprint">'
@@ -441,7 +469,7 @@
       +'<p class="veh-bp-hint">'+esc(T('setupHint'))+'</p></div></div></div>';
   }
   function renderEmptyVehicle(){
-    $('#vehicleCard').innerHTML='<div class="veh">'+emptyStageHTML()+'<div class="veh-body">'
+    $('#vehicleCard').innerHTML=garageBarHTML()+'<div class="veh">'+emptyStageHTML()+'<div class="veh-body">'
       +'<div class="veh-kicker">'+esc(T('noVehicle'))+'</div>'
       +'<h2 class="veh-name">'+esc(T('setupVehicle'))+'</h2>'
       +'<div class="veh-tools">'
@@ -452,9 +480,9 @@
   }
   function renderVehicle(){
     if(!isConfigured()){renderEmptyVehicle();return}
-    const v=veh(),c=colorOf(v.color),name=(v.brand+' '+v.model).trim(),photo=isPhotoActive(v),has=hasPhoto(v);
+    const v=veh(),c=colorOf(v.color),name=AC.core.vehicleLabel(v),photo=isPhotoActive(v),has=hasPhoto(v);
     if(has)ensureBlueprint(v); /* se precalcula para que el cambio de vista sea instantáneo */
-    $('#vehicleCard').innerHTML='<div class="veh">'+stageHTML(v)+'<div class="veh-body">'
+    $('#vehicleCard').innerHTML=garageBarHTML()+'<div class="veh">'+stageHTML(v)+'<div class="veh-body">'
       +'<div class="veh-kicker">'+T('myVehicle')+'</div><h2 class="veh-name">'+esc(name||T('myCar'))+'</h2>'
       +'<div class="veh-meta"><span>'+esc(v.year)+'</span><span class="sep">·</span><span>'+esc(bodyName(v.body))+'</span><span class="sep">·</span>'
       +'<span class="dot" style="background:'+c.hex+'"></span><span>'+esc(colorName(v.color))+'</span></div>'
@@ -481,36 +509,31 @@
     card.addEventListener('pointerleave',reset);card.addEventListener('pointercancel',reset);
   }
 
-  /* ---------- Recorte de fondo client-side (Transformers.js / RMBG-1.4 en WASM) ----------
-     El módulo y los pesos ONNX se descargan solo cuando se pide un recorte,
-     desde URLs CDN autocontenidas (sin publicPath/relative asset issues).
-     El PNG resultante se guarda en localStorage junto al modelo que lo generó:
-     las recargas no reprocesan, pero un recorte del modelo anterior puede
-     regenerarse pulsando otra vez "Recorte IA". */
+  /* ---------- Recorte de fondo client-side (Web Worker + Transformers.js) ----------
+     El módulo ESM, los pesos ONNX/WASM y la inferencia se ejecutan en
+     js/bg-worker.js. El Worker devuelve RGBA crudo; el hilo principal crea el
+     <canvas> y codifica el PNG con toDataURL (compatible con WebKit móvil).
+     El PNG resultante se guarda en localStorage con el modelo que lo generó;
+     un recorte de un modelo anterior se regenera al pulsar "Recorte IA". */
   const readFile=file=>new Promise((res,rej)=>{const rd=new FileReader();rd.onload=()=>res(rd.result);rd.onerror=()=>rej(new Error('file'));rd.readAsDataURL(file)});
   const loadImage=src=>new Promise((res,rej)=>{const im=new Image();im.onload=()=>res(im);im.onerror=()=>rej(new Error('image'));im.src=src});
-  const withTimeout=(p,ms)=>Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),ms))]);
-  /* URL completa: jsDelivr sirve el bundle ESM con todos sus chunks internos
-     bajo el mismo prefijo, por lo que no hay rutas relativas rotas. */
-  /* NOTA: 3.3.3 no registra el task 'background-removal' (verificado en el
-     bundle: solo image-segmentation, image-classification, etc.); el task se
-     introdujo en 3.5.x. Se usa 3.7.6, estable y con soporte WASM + RMBG. */
-  const BG_MODULE_URL='https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.6';
-  /* RMBG-1.4 es un segmentador de objeto principal (entrenado también con
-     autos/objetos, no sólo retratos), así que conserva la carrocería completa.
-     Se prueba primero el id solicitado; si ese repo no publica pesos ONNX se
-     usa el repo oficial briaai/RMBG-1.4 (mismo modelo, con onnx/model.onnx).
-     MODNET queda únicamente como último respaldo si fallan los dos RMBG. */
-  const BG_MODELS=[
-    {id:'onnx-community/RMBG-1.4',dtype:'fp32'},
-    {id:'briaai/RMBG-1.4',dtype:'fp32'},
-    {id:'Xenova/modnet',dtype:'fp32'}
-  ];
+  const BG_WORKER_URL=new URL('./js/bg-worker.js',document.baseURI).href;
+  /* Modelo válido para recortes vehiculares, compartido por PC y móvil. MODNet
+     se excluye: está entrenado para personas y puede borrar casi toda la
+     carrocería en autos claros. SegFormer-B0 q8 (~4 MB) además evita los
+     abortos de Safari/WebKit con ONNX grandes sin caché persistente. */
+  const BG_MODEL_ID='Xenova/segformer-b0-finetuned-ade-512-512';
+  const BG_MODEL_IDS=[BG_MODEL_ID];
+  const MIN_VISIBLE_MASK_RATIO=0.08; /* <8% visible => máscara rota / recorte vacío */
+  /* Móvil = pantalla < 900 px O puntero grueso (cualquier dispositivo táctil). */
+  const isMobileAI=()=>!!(window.matchMedia&&(window.matchMedia('(max-width:899px)').matches||window.matchMedia('(pointer:coarse)').matches));
+  /* Mismo modelo en PC y móvil: 1024 px en PC, 512 px en móvil. */
+  const aiMaxEdge=()=>isMobileAI()?512:1024;
   const PHOTO_FIELDS=['photoDataUrl','photoOriginal','photoFallback','photoCutDataUrl','photoCutModel','photoCut','photoCutWanted','photoView','usePhoto'];
-  let cutInFlight=null,bgPipePromise=null,bgPipeKey='',bgPipeFailures=Object.create(null),bgModelUsed='';
+  let cutInFlight=null,bgModelUsed='',aiWorker=null,activeAIJob=null,aiJobSeq=0;
   /* Un PNG guardado por una versión anterior no tiene photoCutModel (o tiene un
      id que ya no usamos): se considera obsoleto y se regenera bajo demanda. */
-  const isStaleCut=v=>!!(v&&v.photoCutDataUrl&&(!v.photoCutModel||!BG_MODELS.some(m=>m.id===v.photoCutModel)));
+  const isStaleCut=v=>!!(v&&v.photoCutDataUrl&&(!v.photoCutModel||BG_MODEL_IDS.indexOf(v.photoCutModel)<0));
   /* Fuente siempre sin recortar: si la vista actual es el PNG recortado, se
      vuelve a la original guardada (o a la foto de demo) para no degradar el
      resultado al segmentar dos veces. */
@@ -521,83 +544,106 @@
     return v.photoDataUrl||null;
   }
 
-  function loadBgModule(){
-    if(!bgModPromise)bgModPromise=import(/* @vite-ignore */ BG_MODULE_URL)
-      .catch(e=>{bgModPromise=null;throw e});
-    return bgModPromise;
+  /* No se reutiliza un Worker "pausado": cancelar o fallar termina el Worker
+     para liberar de inmediato la memoria WASM del dispositivo. */
+  const cutError=cancelled=>Object.assign(new Error(cancelled?'cut cancelled':'AI worker'),{cancelled:!!cancelled});
+  function killAIWorker(){
+    if(aiWorker){try{aiWorker.terminate()}catch(e){}aiWorker=null}
+    bgModelUsed='';
   }
-  function getSegmenter(onPct){
-    const key=BG_MODELS.map(m=>m.id).join('|')+'|wasm';
-    if(bgPipePromise&&bgPipeKey===key)return bgPipePromise;
-    bgPipeKey=key;
-    bgPipePromise=(async()=>{
-      const mod=await loadBgModule();
-      if(typeof mod.pipeline!=='function')throw new Error('transformers.pipeline missing');
-      let lastErr;
-      for(const m of BG_MODELS){
-        if(bgPipeFailures[m.id])continue;
-        try{
-          onPct(8);
-          const pipe=await mod.pipeline('background-removal',m.id,{
-            /* forzamos WASM: las GPU/WebGPU no están disponibles de forma
-               fiable en todos los navegadores y el fallback es silencioso. */
-            device:'wasm',dtype:m.dtype,
-            progress_callback:p=>{
-              if(!p||typeof p.progress!=='number')return;
-              /* 10..70: descarga del modelo; el resto es inferencia. */
-              onPct(10+p.progress*60);
-            }
-          });
-          bgModelUsed=m.id;
-          return pipe;
-        }catch(err){
-          lastErr=err;
-          bgPipeFailures[m.id]=Date.now();
-          console.warn('[AutoCare] background model failed: '+m.id,err);
-        }
-      }
-      throw lastErr||new Error('no background segmentation model');
-    })().catch(e=>{bgPipePromise=null;throw e});
-    return bgPipePromise;
+  function failActiveJob(err){
+    const job=activeAIJob;if(!job)return;
+    activeAIJob=null;job.reject(err);
+  }
+  function maskVisibleRatio(mask,pixels){
+    const total=Math.max(1,Math.floor((pixels&&pixels.length||0)/4));
+    if(mask&&typeof mask.ratio==='number')return mask.ratio;
+    if(mask&&typeof mask.visible==='number')return mask.visible/total;
+    let visible=0;
+    const src=pixels||[];
+    for(let i=3;i<src.length;i+=4){if(src[i]>128)visible++}
+    return visible/total;
+  }
+
+  /* WebKit móvil no codifica PNG de forma fiable dentro del Worker: el canvas
+     y el toDataURL se crean aquí. createImageData + set es más compatible que
+     el constructor ImageData en Safari iOS. */
+  function rgbaToPNG(buffer,width,height,mask){
+    const w=Math.floor(Number(width)),h=Math.floor(Number(height));
+    if(!(w>0)||!(h>0))throw new Error('invalid AI image size');
+    const expected=w*h*4;
+    let bytes;
+    if(buffer instanceof ArrayBuffer)bytes=new Uint8ClampedArray(buffer);
+    else if(buffer&&typeof buffer.length==='number')bytes=buffer instanceof Uint8ClampedArray?buffer:new Uint8ClampedArray(buffer);
+    else throw new Error('missing AI pixel data');
+    if(bytes.length<expected)throw new Error('incomplete AI pixel data ('+bytes.length+'/'+expected+')');
+    const pixels=bytes.subarray(0,expected);
+    const ratio=maskVisibleRatio(mask,pixels);
+    if(ratio<MIN_VISIBLE_MASK_RATIO){
+      const err=new Error('mask too empty ('+Math.round(ratio*100)+'%)');
+      err.code='mask-too-empty';err.visibleRatio=ratio;throw err;
+    }
+    const cv=document.createElement('canvas');cv.width=w;cv.height=h;
+    const ctx=cv.getContext('2d');
+    if(!ctx||typeof ctx.createImageData!=='function'||typeof ctx.putImageData!=='function')throw new Error('canvas 2d unavailable');
+    const image=ctx.createImageData(w,h);
+    image.data.set(pixels);
+    ctx.putImageData(image,0,0);
+    return cv.toDataURL('image/png');
+  }
+  function handleAIWorkerMessage(d){
+    const job=activeAIJob;
+    if(!job||!d||d.id!==job.id)return; /* descarta respuestas de un trabajo anterior */
+    if(d.type==='progress'){job.onPct(d.pct);return}
+    if(d.type==='model'){bgModelUsed=d.model||'';return}
+    if(d.type==='done'){
+      activeAIJob=null;
+      try{
+        const png=d.rgba?rgbaToPNG(d.rgba,d.width,d.height,d.mask):d.png;
+        if(!png)throw new Error('AI worker returned no image');
+        job.resolve(png);
+      }catch(err){job.reject(err)}
+      return;
+    }
+    if(d.type==='error'){activeAIJob=null;job.reject(new Error(d.message||'AI worker error'))}
+  }
+  function ensureAIWorker(){
+    if(aiWorker)return aiWorker;
+    const w=new Worker(BG_WORKER_URL,{type:'module'});
+    aiWorker=w;
+    w.addEventListener('message',e=>handleAIWorkerMessage(e.data));
+    w.addEventListener('error',e=>{
+      const detail=e&&(e.message||(e.error&&e.error.message));
+      failActiveJob(new Error(detail?'AI worker: '+detail:'AI worker failed'));
+      killAIWorker();
+    });
+    w.addEventListener('messageerror',()=>{failActiveJob(new Error('AI worker message error'));killAIWorker()});
+    return w;
+  }
+  function requestCutout(src,onPct){
+    const w=ensureAIWorker();
+    const id=++aiJobSeq;
+    const mobile=isMobileAI();
+    return new Promise((resolve,reject)=>{
+      if(activeAIJob)failActiveJob(cutError(true));
+      activeAIJob={id,resolve,reject,onPct};
+      /* PC y móvil comparten el pipeline SegFormer q8; `mobile`/`profile` se
+         envían solo por compatibilidad. La app ya aplicó maxEdge a la foto. */
+      w.postMessage({type:'cut',id,src,profile:mobile?'mobile':'desktop',mobile,maxEdge:mobile?512:1024});
+    });
+  }
+  function cancelCutout(){
+    hideProgress();
+    killAIWorker();              /* worker.terminate() inmediato */
+    failActiveJob(cutError(true));
+    cutInFlight=null;            /* permite reintentar sin esperas */
+    cutToast(T('cutCancelled'));
   }
   async function cutoutWithAI(src,onPct){
-    const pipe=await getSegmenter(onPct);
-    let image=src;
-    /* El pipeline acepta data URLs, URLs http(s) e ImageData. Las fotos de
-       demo se sirven desde el propio origen, sin problemas de CORS. */
-    if(typeof src==='string'&&!/^https?:|^data:/i.test(src)){
-      image=new URL(src,location.href).href;
-    }
-    onPct(72);
-    const result=await pipe(image,{raw:false});
-    onPct(96);
-    let output=Array.isArray(result)?result[0]:result;
-    /* 3.7.6 devuelve RawImage (con alpha ya aplicado) dentro de un array.
-       RawImage expone toCanvas()/toBlob(); también se aceptan las variantes
-       ImageData/canvas de otras versiones. */
-    let img=output&&output.image?output.image:output;
-    /* Algunas builds devuelven un OffscreenCanvas desde toCanvas() (sin
-       toDataURL): aunque intente esa vía, se cae al blob PNG. */
-    if(img&&typeof img.toCanvas==='function'){
-      try{
-        const canvas=img.toCanvas();
-        if(canvas&&typeof canvas.toDataURL==='function')return canvas.toDataURL('image/png');
-      }catch(e){/* se intenta con toBlob() abajo */}
-    }
-    if(img&&typeof img.toBlob==='function'){
-      const blob=await img.toBlob('image/png');
-      return new Promise((res,rej)=>{
-        const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=()=>rej(new Error('png'));fr.readAsDataURL(blob);
-      });
-    }
-    if(img&&typeof img.toDataURL==='function')return img.toDataURL('image/png');
-    if(img&&img.data&&img.width&&img.height){
-      const cv=document.createElement('canvas');
-      cv.width=img.width;cv.height=img.height;
-      cv.getContext('2d').putImageData(img,0,0);
-      return cv.toDataURL('image/png');
-    }
-    throw new Error('unexpected segmentation output: '+Object.prototype.toString.call(img));
+    onPct(4);
+    const png=await requestCutout(src,onPct);
+    onPct(100);
+    return png;                 /* PNG codificado en el hilo principal desde el RGBA del Worker */
   }
   function trimTransparentPixels(srcCv,alphaThreshold){
     const w=srcCv.width,h=srcCv.height,ctx=srcCv.getContext('2d');
@@ -622,7 +668,7 @@
   }
 
   function pngFromBlob(blob,maxW,maxH){
-    /* Transformers.js entrega un PNG data URL; si viniera un Blob se
+    /* rgbaToPNG() ya entregó un data URL PNG; si viniera un Blob se
        transforma en object URL. Ambos caminos producen el mismo canvas. */
     const isData=typeof blob==='string'&&/^data:image\//.test(blob);
     const url=isData?blob:URL.createObjectURL(blob);
@@ -682,7 +728,8 @@
     document.querySelectorAll('.veh-stage').forEach(st=>{
       if(st.querySelector('.veh-progress'))return;
       const el=document.createElement('div');el.className='veh-progress';
-      el.innerHTML='<span class="veh-progress-spin" aria-hidden="true"></span><span>'+label+'</span><b>0%</b>';
+      el.innerHTML='<span class="veh-progress-spin" aria-hidden="true"></span><span>'+label+'</span><b>0%</b>'
+        +'<button type="button" class="veh-progress-cancel" data-act="cut-cancel" aria-label="'+esc(T('cancel'))+'">'+esc(T('cancel'))+'</button>';
       st.appendChild(el);
     });
     const live=document.getElementById('cutStatus');if(live)live.textContent=T('cuttingOut');
@@ -735,27 +782,40 @@
       if(v.photoCutDataUrl)setPhotoView(v,'cut');
       else setPhotoView(v,'fallback',true);
       persistPhoto(v,inModal,paint,tools);
-      toast(T('photoFallback'));return false;
+      cutToast(T('photoFallback'));return false;
     }
     showProgress();setProgress(4);
     try{
-      const blob=await withTimeout(cutoutWithAI(src,setProgress),120000);
-      const png=await pngCutData(blob);
+      const png=await cutoutWithAI(src,setProgress);
+      const cut=await pngCutData(png);
       if(epoch!==visualEpoch)return false;
       v=photoTarget(inModal);
-      v.photoCutDataUrl=png;
-      v.photoCutModel=bgModelUsed||BG_MODELS[0].id;
+      v.photoCutDataUrl=cut;
+      v.photoCutModel=bgModelUsed||BG_MODEL_ID;
       setPhotoView(v,'cut');
       persistPhoto(v,inModal,paint,tools);
-      toast(T(inModal?'photoReady':'photoSaved'));
+      cutToast(T(inModal?'photoReady':'photoSaved'));
       return true;
     }catch(err){
+      /* Cancelar: el Worker ya fue terminado; se deja la foto original limpia
+         y no se muestra el aviso de fallback (cancelCutout ya avisó). */
+      if(err&&err.cancelled){
+        killAIWorker();
+        if(epoch===visualEpoch){
+          v=photoTarget(inModal);
+          setPhotoView(v,'original');
+          persistPhoto(v,inModal,paint,tools);
+        }
+        return false;
+      }
       console.warn('[AutoCare] AI cutout failed (technical detail):',err&&err.stack?err.stack:err);
       if(epoch===visualEpoch){
         v=photoTarget(inModal);
-        setPhotoView(v,'fallback',true);
+        /* Máscara vacía/rota: conservar foto original limpia, sin aplicar recorte. */
+        if(err&&err.code==='mask-too-empty')setPhotoView(v,'original',false);
+        else setPhotoView(v,'fallback',true);
         persistPhoto(v,inModal,paint,tools);
-        toast(T('photoFallback'));
+        cutToast(aiFailureMessage(err));
       }
       return false;
     }finally{hideProgress()}
@@ -772,11 +832,11 @@
     }
     if(v.photoCut||v.photoView==='cut'){
       setPhotoView(v,'original');persistPhoto(v,inModal,paint,tools);
-      toast(T('originalPhoto'));return;
+      cutToast(T('originalPhoto'));return;
     }
     if(v.photoCutDataUrl){
       setPhotoView(v,'cut');persistPhoto(v,inModal,paint,tools);
-      toast(T('cutoutAI'));return;
+      cutToast(T('cutoutAI'));return;
     }
     const src=cutSource(v);
     if(src)runCutout(src,inModal,paint,tools);
@@ -790,19 +850,28 @@
     try{src=await readFile(file);im=await loadImage(src)}
     catch(err){toast(err.message==='file'?T('fileReadErr'):T('photoReadErr'));return}
     if(epoch!==visualEpoch)return;
+    /* La foto se reescribe en Canvas a 512 px en móvil (1024 px en escritorio)
+       antes de cualquier proceso; el Worker vuelve a comprobar el límite.
+       El dataURL resultante es la ÚNICA fuente que se guarda y se envía a IA. */
+    let aiSrc=src,aiIm=im;
+    const maxEdge=aiMaxEdge();
+    try{
+      aiSrc=jpegData(im,maxEdge,maxEdge,.86);
+      aiIm=await loadImage(aiSrc);
+    }catch(e){/* si Canvas falla, el Worker reintenta el redimensionado con OffscreenCanvas */}
     /* La foto original y su encuadre suave se guardan antes de intentar la IA:
        así siempre hay una vista utilizable, incluso sin conexión. */
     const v=photoTarget(inModal);
     try{
-      v.photoOriginal=jpegData(im,1280,800,.74);
-      v.photoFallback=vignetteJPEG(im);
-    }catch(e){v.photoOriginal=src;v.photoFallback=src}
+      v.photoOriginal=jpegData(aiIm,maxEdge,maxEdge,.74);
+      v.photoFallback=vignetteJPEG(aiIm);
+    }catch(e){v.photoOriginal=aiSrc;v.photoFallback=aiSrc}
     v.photoCutDataUrl=null;
     const wanted=v.photoCutWanted!==false;
     setPhotoView(v,'fallback',wanted);
     persistPhoto(v,inModal,paint,tools);
-    if(wanted)return runCutout(src,inModal,paint,tools);
-    toast(T(inModal?'photoReady':'photoSaved'));
+    if(wanted)return runCutout(aiSrc,inModal,paint,tools);
+    cutToast(T(inModal?'photoReady':'photoSaved'));
     return false;
   }
 
@@ -814,19 +883,24 @@
     demoPhotoJob=true;
     try{
       const src=new URL(DEMO_PHOTO,location.href).href;
-      const blob=await withTimeout(cutoutWithAI(src,()=>{}),120000);
-      const png=await pngCutData(blob);
+      const data=await cutoutWithAI(src,()=>{});
+      const png=await pngCutData(data);
       if(epoch!==visualEpoch)return;
       const cur=veh();
       if(hasDemo()&&cur.photoDataUrl===DEMO_PHOTO){
         cur.photoCutDataUrl=png;
-        cur.photoCutModel=bgModelUsed||BG_MODELS[0].id;
+        cur.photoCutModel=bgModelUsed||BG_MODEL_ID;
         setPhotoView(cur,'cut');
         commit();
       }
     }catch(err){
-      demoPhotoFailed=true;
-      console.warn('[AutoCare] Demo photo cutout skipped (technical detail):',err&&err.stack?err.stack:err);
+      /* Un recorte del usuario (o un cambio de vehículo) puede terminar el
+         Worker del demo: no se marca como fallido para permitir reintentarlo. */
+      if(!(err&&err.cancelled)){
+        demoPhotoFailed=true;
+        console.warn('[AutoCare] Demo photo cutout skipped (technical detail):',err&&err.stack?err.stack:err);
+        if(navigator.onLine!==false)cutToast(aiFailureMessage(err));
+      }
     }finally{
       demoPhotoJob=false;
     }
@@ -890,11 +964,11 @@
 
   /* ---------- Render ---------- */
   function render(){
-    $('#vName').textContent=isConfigured()?(S().name||T('myCar')):T('noVehicle');
+    $('#vName').textContent=isConfigured()?(AC.core.vehicleLabel(veh())||S().name||T('myCar')):T('noVehicle');
     $('#demo').hidden=!hasDemo();
     const sm=TL.summarize(state,today());
-    renderVehicle();renderHero(sm);renderStats(sm);renderAlerts(sm);renderRems(sm);renderDocs();
-    renderEff();renderSpend();renderCats();renderHist();
+    renderVehicle();renderHero(sm);renderStats(sm);renderAlerts(sm);renderRems(sm);renderDocs();renderQuick(sm);
+    renderEff();renderSpend();renderCats();renderHist();renderCost(sm);renderCompare();
     $('#foot').textContent=T('footer');
     processDemoPhoto();
   }
@@ -930,7 +1004,7 @@
     const prev=sm.prevCost>0?T('previousMonth',{v:money(sm.prevCost,0)}):T('noPrevMonth');
     $('#stats').innerHTML=
       tile(T('avgEff'),sm.avg!=null?nf(ed(sm.avg),1)+'<small>'+esc(el())+'</small>':'–',sm.segs.length?T('segment',{n:sm.segs.length}):T('needTwoFull'))
-     +tile(T('costPer',{u:dU()}),sm.cpk!=null?money(sm.cpk*dF(),2):'–',T('costIncluded'))
+     +tile(T('costPer',{u:dU()}),sm.cpd.value!=null?money(sm.cpd.value*dF(),2):'–',sm.cpd.value!=null?T('costDistanceShort',{d:nf(dOut(sm.cpd.dist))}):T('costIncluded'))
      +tile(esc(mname(today().slice(0,7),false)),money(sm.monthCost,0),prev)
      +tile(T('totalRecorded'),money(sm.total,0),T('records',{n:sm.count}));
   }
@@ -988,6 +1062,86 @@
         +'<button class="icon-btn" style="width:36px;height:36px" data-act="doc-edit" data-id="'+esc(d.id)+'" aria-label="'+esc(T('editDoc',{n:d.name}))+'"><svg width="20" height="20" class="ico" style="width:16px;height:16px"><use href="#i-edit"/></svg></button></li>';
     }).join('')+'</ul>';
     $('#docs').innerHTML=h;
+  }
+
+  /* ---------- Ficha rápida: componentes + documentos clave ---------- */
+  function componentStatus(c,sm,t){
+    if(!c||(!c.date&&c.odo==null))return{state:'unset'};
+    const lim=AC.core.COMP_LIMITS[c.key]||{km:40000,months:48};
+    const kmLimit=c.intervalKm||lim.km,moLimit=c.intervalMonths||lim.months;
+    let kS='ok',leftKm=null,nextOdo=null;
+    if(c.odo!=null&&sm.odo!=null){
+      leftKm=kmLimit-(sm.odo-c.odo);nextOdo=c.odo+kmLimit;
+      kS=leftKm<0?'over':leftKm<=S().warnKm?'soon':'ok';
+    }
+    let dS='ok',days=null,due=null;
+    if(c.date){
+      due=TL.addMonths(c.date,moLimit);days=TL.daysBetween(t,due);
+      dS=days<0?'over':days<=S().warnDays?'soon':'ok';
+    }
+    const status=(kS==='over'||dS==='over')?'over':(kS==='soon'||dS==='soon')?'soon':'ok';
+    return{state:status,kS,dS,leftKm,nextOdo,days,due,kmLimit,moLimit};
+  }
+  function renderQuick(sm){
+    const t=today();
+    const comps=AC.core.COMP_KEYS.map(k=>{
+      const c=state.components.find(x=>x.key===k),s=componentStatus(c,sm,t);
+      const pill=s.state==='unset'?'<span class="pill">'+T('noData')+'</span>':'<span class="pill '+s.state+'">'+(s.state==='over'?T('overdue'):s.state==='soon'?T('soon'):T('upToDate'))+'</span>';
+      let detail=T('quickEmpty');
+      if(s.state!=='unset'){
+        const parts=[];
+        if(c.date)parts.push(T('installedOn',{d:fdate(c.date,true)}));
+        if(c.odo!=null)parts.push(T('installedAt',{v:nf(dOut(c.odo)),u:dU()}));
+        if(s.leftKm!=null)parts.push(s.leftKm>0?T('left',{v:nf(dOut(s.leftKm)),u:dU()}):T('past',{v:nf(dOut(-s.leftKm)),u:dU()}));
+        if(s.due)parts.push(T('dueShort',{d:fdate(s.due,true)}));
+        detail=parts.join(' · ');
+      }
+      const icon=k==='tires'?'i-tire':k==='battery'?'i-cog':'i-wrench';
+      return'<li class="quick-row"><span class="qi"><svg width="20" height="20" class="ico"><use href="#'+icon+'"/></svg></span><div><b>'+esc(T('comp.'+k))+' '+pill+'</b><span class="d">'+detail+'</span></div>'
+        +'<button type="button" class="btn sm" data-act="comp-edit" data-id="'+k+'">'+(c?T('edit'):T('add'))+'</button></li>';
+    }).join('');
+    /* Los documentos (Seguro, Patente, Inspección) se muestran UNA SOLA VEZ en
+       #docs. Esta tarjeta sólo resume componentes; duplicarlos confundía al
+       usuario y doblaba los botones en pantallas pequeñas. */
+    $('#quick').innerHTML='<div class="card-h"><h2>'+T('quickTitle')+'</h2><span class="lbl">'+esc(AC.core.vehicleLabel(veh()))+'</span></div>'
+      +'<div class="quick-grid"><section><h3>'+T('components')+'</h3><ul class="list quick-list">'+comps+'</ul></section></div>';
+  }
+
+  /* ---------- Costo real por km / milla ---------- */
+  function renderCost(sm){
+    const c=sm.cpd;
+    const sum=f=>state.entries.reduce((a,e)=>a+(f(e)?(e.cost||0):0),0);
+    const fuel=sum(e=>e.type==='fuel'),maint=sum(e=>e.type==='exp'&&(e.cat==='service'||e.cat==='tires')),repair=sum(e=>e.type==='exp'&&e.cat==='repair');
+    const line=(l,v)=>'<div class="cost-line"><span>'+l+'</span><b>'+v+'</b></div>';
+    $('#cost').innerHTML='<div class="card-h"><h2>'+T('costPer',{u:dU()})+'</h2><span class="lbl">'+T('costReal')+'</span></div>'
+      +'<div class="cost-big">'+(c.value!=null?money(c.value*dF(),2):'–')+'<small>/'+esc(dU())+'</small></div>'
+      +'<div class="cost-lines">'
+      +line(T('costFuel'),money(fuel,0))
+      +line(T('costMaintRepair'),money(maint+repair,0))
+      +line(T('costRepairDetail'),money(repair,0))
+      +line(T('costDistance'),nf(dOut(c.dist))+' '+dU())
+      +'</div><p class="hint">'+T('costFormula')+'</p>';
+  }
+
+  /* ---------- Comparación mes actual vs. anterior ---------- */
+  function renderCompare(){
+    const ms=TL.monthlySpend(state.entries,today(),2),prev=ms[0]||{g:{},total:0},cur=ms[1]||prev;
+    const delta=cur.total-prev.total,pct=prev.total>0?delta/prev.total*100:(cur.total>0?null:0);
+    const cls=pct==null?'':delta>0?'over':delta<0?'ok':'';
+    const change=pct==null?T('noPrevSpend'):(delta>0?T('spendUp',{v:nf(Math.abs(pct),1)}):delta<0?T('spendDown',{v:nf(Math.abs(pct),1)}):T('spendSame'));
+    const groups=[['fuel',T('group.fuel')],['maint',T('group.maint')],['other',T('group.other')]];
+    const mx=Math.max(1,cur.total,prev.total);
+    const rows=groups.map(g=>{
+      const k=g[0],now=(cur.g[k]||0)+(k==='maint'?(cur.g.repair||0):0),was=(prev.g[k]||0)+(k==='maint'?(prev.g.repair||0):0);
+      return'<div class="cmp-row"><span class="cmp-name">'+g[1]+'</span><span class="cmp-bar"><i style="width:'+(now/mx*100).toFixed(1)+'%"></i></span>'
+        +'<b>'+money(now,0)+'</b><span class="cmp-prev">'+money(was,0)+'</span></div>';
+    }).join('');
+    $('#compare').innerHTML='<div class="card-h"><h2>'+T('compareTitle')+'</h2><span class="lbl">'+esc(S().cur)+'</span></div>'
+      +'<div class="cmp-head"><div><span class="lbl">'+T('currentMonth')+'</span><b>'+money(cur.total,0)+'</b></div>'
+      +'<div class="cmp-delta '+cls+'">'+(pct==null?'—':delta>0?'▲':delta<0?'▼':'—')+' '+change+'</div>'
+      +'<div><span class="lbl">'+T('previousMonthShort')+'</span><b>'+money(prev.total,0)+'</b></div></div>'
+      +'<div class="cmp-legend"><span></span><span>'+T('currentMonthShort')+'</span><span>'+T('previousMonthShort')+'</span></div>'
+      +'<div class="cmp-rows">'+rows+'</div>';
   }
 
   /* ---- gráficos ---- */
@@ -1086,15 +1240,56 @@
   }
 
   /* ---------- Hoja modal ---------- */
-  let lastFocus=null,sheetKind=null;
-  function openSheet(html,focusSel){
-    const b=$('#sheetBody'),wasHidden=$('#sheet').hidden;b.innerHTML=html;$('#sheet').hidden=false;document.body.classList.add('lock');
-    if(wasHidden)lastFocus=document.activeElement;b.scrollTop=0;
-    const f=focusSel?b.querySelector(focusSel):null;if(f)f.focus();
+  let lastFocus=null,sheetKind=null,savedBodyOverflow=null;
+  /* Guardar el valor inline original y devolverlo siempre en closeSheet():
+     si queda 'hidden' tras Guardar/Cancelar, el documento se queda sin
+     respuesta táctil en Safari/WebKit móvil. */
+  function lockBodyScroll(){
+    if(savedBodyOverflow!==null)return;
+    savedBodyOverflow=document.body.style.overflow;
+    document.body.style.overflow='hidden';
+    document.body.classList.add('lock');
   }
-  function closeSheet(){$('#sheet').hidden=true;document.body.classList.remove('lock');$('#sheetBody').innerHTML='';sheetKind=null;vehicleDraft=null;if(lastFocus&&lastFocus.focus)lastFocus.focus()}
+  function unlockBodyScroll(){
+    if(savedBodyOverflow===null)return;
+    document.body.style.overflow=savedBodyOverflow;
+    savedBodyOverflow=null;
+    document.body.classList.remove('lock');
+  }
+  function openSheet(html,focusSel){
+    unlockBodyScroll();
+    const b=$('#sheetBody'),wrap=$('#sheet'),wasHidden=wrap.hidden;
+    b.innerHTML=html;wrap.hidden=false;wrap.scrollTop=0;lockBodyScroll();
+    if(wasHidden)lastFocus=document.activeElement;
+    const f=focusSel?b.querySelector(focusSel):null;
+    /* En pantallas táctiles no se abre el teclado al abrir el modal: tapaba
+       los botones Guardar/Cancelar y los dejaba fuera del viewport visible. */
+    const coarse=window.matchMedia&&window.matchMedia('(pointer:coarse)').matches;
+    if(f&&(!coarse||!f.matches('input,textarea,select')))f.focus();
+  }
+  function closeSheet(){
+    $('#sheet').hidden=true;$('#sheetBody').innerHTML='';sheetKind=null;vehicleDraft=null;
+    unlockBodyScroll();
+    if(lastFocus&&lastFocus.focus)lastFocus.focus();
+    lastFocus=null;
+  }
   let toastT=null;
-  function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('on'),2400)}
+  /* Un único temporizador: nunca queda fijado aunque se encadenen avisos.
+     Los avisos de recorte viven 3 s; el resto mantiene los 2.5 s habituales. */
+  function toast(m,ms){
+    const t=$('#toast');if(!t)return;
+    t.textContent=m;t.classList.add('on');
+    clearTimeout(toastT);
+    toastT=setTimeout(()=>{t.classList.remove('on');toastT=null},typeof ms==='number'?ms:2500);
+  }
+  const cutToast=m=>toast(m,3000);
+  /* Sin red: aviso de encuadre. Con red: el motivo técnico real, nunca el
+     texto genérico de "sin conexión" para un fallo de RAM/codificación/modelo. */
+  function aiFailureMessage(err){
+    if(err&&err.code==='mask-too-empty')return T('photoCutEmpty');
+    const detail=err&&err.message?String(err.message):String(err||'unknown error');
+    return navigator.onLine===false?T('photoFallback'):T('photoFailDetail',{error:detail});
+  }
   const nv=id=>{const e=document.getElementById(id);return e?e.valueAsNumber:NaN};
   const sv=id=>{const e=document.getElementById(id);return e?e.value.trim():''};
   function head(title){return'<div class="sh-head"><h2 id="shT">'+title+'</h2><button class="icon-btn" type="button" data-close aria-label="'+T('close')+'"><svg width="20" height="20" class="ico"><use href="#i-x"/></svg></button></div>'}
@@ -1116,7 +1311,7 @@
       photoDataUrl:d.photoDataUrl,photoOriginal:d.photoOriginal,photoFallback:d.photoFallback,photoCutDataUrl:d.photoCutDataUrl,
       photoCutModel:d.photoCutModel||null,
       photoCut:!!d.photoCut,photoCutWanted:d.photoCutWanted!==false,photoView:d.photoView||'fallback',usePhoto:!!d.usePhoto,empty:false});
-      state.settings.name=(d.brand+' '+d.model).trim()||T('myCar');commit()};
+      state.settings.name=AC.core.vehicleLabel(d);commit()};
     const other=BRANDS.indexOf(d.brand)<0;
     const colors=COLORS.map(c=>'<label class="col"><input type="radio" name="v-color" value="'+c.id+'"'+(d.color===c.id?' checked':'')+'><span><i style="background:linear-gradient(135deg,'+c.light+' 0%,'+c.hex+' 55%,'+c.dark+' 100%)"></i>'+esc(T('color.'+c.id))+'</span></label>').join('');
     openSheet(head(T('editVehicle'))+'<form id="frm" novalidate>'
@@ -1160,6 +1355,58 @@
 
   function armDelete(btn,fn){
     btn.addEventListener('click',()=>{if(btn.classList.contains('armed')){fn();return}btn.classList.add('armed');btn.textContent=T('confirmDelete');setTimeout(()=>{if(btn.isConnected){btn.classList.remove('armed');btn.textContent=T('delete')}},4000)});
+  }
+
+  /* ---------- Garaje: alta, cambio y baja de vehículos ---------- */
+  function switchVehicle(id){
+    if(id===store.garage.activeId())return;
+    if(!store.garage.select(id))return;
+    if(typeof AC.clearVisuals==='function')AC.clearVisuals();
+    commit();
+  }
+  function addVehicle(){
+    store.garage.add();
+    if(typeof AC.clearVisuals==='function')AC.clearVisuals();
+    commit();
+    openVehicle();
+    toast(T('vehicleAdded'));
+  }
+  function openVehicleDelete(){
+    const id=store.garage.activeId(),label=AC.core.vehicleLabel(veh());
+    openSheet(head(T('deleteVehicle'))+'<p class="hint">'+T('deleteVehicleHint',{n:esc(label)})+(store.garage.count()===1?'<br>'+T('lastVehicleHint'):'')+'</p>'
+      +'<div class="sh-foot"><button type="button" class="btn" data-close>'+T('cancel')+'</button><button type="button" class="btn danger" id="delVehGo">'+T('deleteVehicle')+'</button></div>','#delVehGo');
+    armDelete($('#delVehGo'),()=>{
+      store.garage.remove(id);
+      if(typeof AC.clearVisuals==='function')AC.clearVisuals();
+      commit();closeSheet();toast(T('vehicleDeleted'));
+    });
+  }
+
+  /* ---------- Componentes críticos ---------- */
+  function openComponent(key){
+    if(AC.core.COMP_KEYS.indexOf(key)<0)return;
+    sheetKind='comp';
+    const c=state.components.find(x=>x.key===key),edit=!!c,lim=AC.core.COMP_LIMITS[key]||{km:40000,months:48};
+    const km=x=>x!=null&&Number.isFinite(x)?+(dOut(x)).toFixed(0):'';
+    openSheet(head(T(edit?'editComponent':'newComponent',{n:T('comp.'+key)}))+'<form id="frm" novalidate>'
+      +'<div class="row2"><label class="fld"><span>'+T('installDate')+'</span><input id="c-date" type="date" value="'+(c&&c.date?c.date:'')+'"></label>'
+      +'<label class="fld"><span>'+T('odoUnit',{u:dU()})+'</span><input id="c-odo" type="number" inputmode="decimal" step="any" min="0" value="'+(c?km(c.odo):'')+'"></label></div>'
+      +'<div class="row2"><label class="fld"><span>'+T('expectedKm',{u:dU()})+'</span><input id="c-km" type="number" inputmode="decimal" step="any" min="0" value="'+km(c?c.intervalKm:lim.km)+'" placeholder="'+km(lim.km)+'"></label>'
+      +'<label class="fld"><span>'+T('expectedMonths')+'</span><input id="c-mo" type="number" inputmode="numeric" step="1" min="0" value="'+(c&&c.intervalMonths?c.intervalMonths:lim.months)+'" placeholder="'+lim.months+'"></label></div>'
+      +'<p class="hint">'+T('compHint')+'</p><p class="form-err" id="ferr" role="alert"></p>'
+      +'<div class="sh-foot">'+(edit?'<button type="button" class="btn danger" id="delBtn">'+T('delete')+'</button><span class="sp"></span>':'')
+      +'<button type="button" class="btn" data-close>'+T('cancel')+'</button><button type="submit" class="btn primary">'+T('save')+'</button></div></form>','#c-date');
+    if(edit)armDelete($('#delBtn'),()=>{state.components=state.components.filter(x=>x!==c);commit();closeSheet();toast(T('compDeleted'))});
+    $('#frm').addEventListener('submit',e=>{
+      e.preventDefault();
+      const date=sv('c-date'),odo=nv('c-odo'),ik=nv('c-km'),im=nv('c-mo');
+      if(!date&&!Number.isFinite(odo))return $('#ferr').textContent=T('errComp');
+      const rec={id:edit?c.id:uid('p'),key,date:date||null,odo:Number.isFinite(odo)?dIn(odo):null,
+        intervalKm:ik>0?dIn(ik):null,intervalMonths:im>0?Math.round(im):null};
+      if(edit){Object.keys(c).forEach(k=>delete c[k]);Object.assign(c,rec)}
+      else state.components.push(rec);
+      commit();closeSheet();toast(T('compSaved'));
+    });
   }
 
   /* Reinicio usado por "Borrar todos los datos" y por "Empezar con mis datos". */
@@ -1299,17 +1546,22 @@
   }
 
   /* ---------- Documentos ---------- */
-  function openDoc(id){
+  function openDoc(id,pre){
+    pre=pre||{};
     sheetKind='doc';const d=state.docs.find(x=>x.id===id),edit=!!d;
+    const key=edit?(d.key||AC.core.docKeyOf(d.name)):(AC.core.DOC_KEYS.indexOf(pre.key)>=0?pre.key:null);
     openSheet(head(edit?T('editDoc'):T('newDoc'))+'<form id="frm" novalidate>'
-      +'<label class="fld"><span>'+T('name')+'</span><input id="d-name" type="text" maxlength="60" list="dnl" value="'+esc(edit?d.name:'')+'" placeholder="'+esc(T('docNamePlaceholder'))+'" required></label><datalist id="dnl">'+['insurance','tax','inspection','license'].map(k=>'<option value="'+esc(T('doc.'+k))+'">').join('')+'</datalist>'
+      +'<label class="fld"><span>'+T('name')+'</span><input id="d-name" type="text" maxlength="60" list="dnl" value="'+esc(edit?d.name:(key?T('doc.'+key):''))+'" placeholder="'+esc(T('docNamePlaceholder'))+'" required></label><datalist id="dnl">'+['insurance','tax','inspection','license'].map(k=>'<option value="'+esc(T('doc.'+k))+'">').join('')+'</datalist>'
+      +'<label class="fld"><span>'+T('docKey')+'</span><select id="d-key">'+[''].concat(AC.core.DOC_KEYS).map(k=>'<option value="'+k+'"'+(key===k?' selected':'')+'>'+esc(k?T('doc.'+k):T('none'))+'</option>').join('')+'</select></label>'
       +'<label class="fld"><span>'+T('due')+'</span><input id="d-due" type="date" value="'+(edit&&d.due?d.due:'')+'"></label>'
       +'<label class="fld"><span>'+T('note')+'</span><input id="d-note" type="text" maxlength="120" value="'+esc(edit?d.note:'')+'" placeholder="'+esc(T('docNotePlaceholder'))+'"></label>'
       +'<p class="form-err" id="ferr" role="alert"></p><div class="sh-foot">'+(edit?'<button type="button" class="btn danger" id="delBtn">'+T('delete')+'</button><span class="sp"></span>':'')+'<button type="button" class="btn" data-close>'+T('cancel')+'</button><button type="submit" class="btn primary">'+T('save')+'</button></div></form>',edit&&d.due?null:'#d-name');
     if(edit)armDelete($('#delBtn'),()=>{state.docs=state.docs.filter(x=>x.id!==id);commit();closeSheet();toast(T('docDeleted'))});
     $('#frm').addEventListener('submit',e=>{e.preventDefault();
       const name=sv('d-name');if(!name)return $('#ferr').textContent=T('errName');
+      const dk=$('#d-key').value;
       const rec={id:edit?d.id:uid('c'),name,due:sv('d-due')||null,note:sv('d-note')};
+      if(dk)rec.key=dk;
       if(edit){Object.keys(d).forEach(k=>delete d[k]);Object.assign(d,rec)}else state.docs.push(rec);
       commit();closeSheet();toast(T('docSaved'));
     });
@@ -1340,7 +1592,7 @@
     sheetKind='set';const s=S();
     const sel=(id,opts,val)=>'<select id="'+id+'">'+opts.map(o=>'<option value="'+o[0]+'"'+(val===o[0]?' selected':'')+'>'+esc(o[1])+'</option>').join('')+'</select>';
     openSheet(head(T('settings'))+'<form id="frm" novalidate>'
-      +'<label class="fld"><span>'+T('carName')+'</span><input id="s-name" type="text" maxlength="40" value="'+esc(s.name)+'"></label>'
+      +'<label class="fld"><span>'+T('carName')+'</span><input id="s-name" type="text" maxlength="60" value="'+esc(veh().alias||AC.core.vehicleLabel(veh()))+'" placeholder="'+esc(AC.core.vehicleLabel(veh()))+'"></label>'
       +'<label class="fld"><span>'+T('unitSystem')+'</span>'+sel('s-system',[['metric',T('metric')],['imperial',T('imperial')],['custom',T('customUnits')]],systemOf(s))+'</label>'
       +'<div class="row2"><label class="fld"><span>'+T('distance')+'</span>'+sel('s-dist',[['km',T('kilometers')],['mi',T('miles')]],s.dist)+'</label>'
       +'<label class="fld"><span>'+T('fuelUnit')+'</span>'+sel('s-vol',Object.keys(TL.VOL).map(k=>[k,T('vol.'+k)]),s.vol)+'</label></div>'
@@ -1370,7 +1622,9 @@
       const c=sv('s-cur').toUpperCase(),wk=nv('s-wk'),wd=nv('s-wd');
       if(!c)return $('#ferr').textContent=T('errCurrency');
       if(!validCur(c))return $('#ferr').textContent=T('unknownCode');
-      Object.assign(state.settings,{name:sv('s-name')||T('myCar'),dist:$('#s-dist').value,vol:$('#s-vol').value,eff:$('#s-eff').value,cur:c,warnKm:Number.isFinite(wk)&&wk>=0?TL.DIST[$('#s-dist').value].f*wk:1000,warnDays:Number.isFinite(wd)&&wd>=0?Math.round(wd):30});
+      const alias=sv('s-name')||'';
+      veh().alias=alias;
+      Object.assign(state.settings,{name:alias||AC.core.vehicleLabel(veh()),dist:$('#s-dist').value,vol:$('#s-vol').value,eff:$('#s-eff').value,cur:c,warnKm:Number.isFinite(wk)&&wk>=0?TL.DIST[$('#s-dist').value].f*wk:1000,warnDays:Number.isFinite(wd)&&wd>=0?Math.round(wd):30});
       commit();closeSheet();toast(T('settingsSaved'));
     });
     cap('downloads').then(dl=>{if(!dl&&$('#expBtns'))$('#expBtns').hidden=true});
@@ -1391,8 +1645,10 @@
   const ACT={
     'add-fuel':()=>openEntry('fuel'),'add-exp':()=>openEntry('exp'),'add-odo':()=>openEntry('odo'),
     'settings':openSettings,'edit-vehicle':()=>openVehicle(),
+    'veh-add':addVehicle,'veh-del':openVehicleDelete,
+    'comp-edit':key=>openComponent(key),'doc-key':key=>openDoc(null,{key}),
     'veh-view-toggle':()=>{const v=veh();if(!v.photoDataUrl)return;v.usePhoto=!v.usePhoto;commit();toast(T(v.usePhoto?'photoReady':'blueprintReady'))},
-    'veh-cut-toggle':()=>toggleCutout(false),
+    'veh-cut-toggle':()=>toggleCutout(false),'cut-cancel':()=>cancelCutout(),
     'edit-entry':id=>{const e=state.entries.find(x=>x.id===id);if(e)openEntry(e.type==='fuel'?'fuel':e.type==='odo'?'odo':'exp',e)},
     'rem-add':()=>openReminder(),'rem-edit':id=>openReminder(id),
     'rem-log':id=>{const r=state.reminders.find(x=>x.id===id);if(r)openEntry('exp',null,{cat:r.cat,desc:r.name,remId:r.id})},
@@ -1408,9 +1664,12 @@
   document.addEventListener('change',e=>{
     const i=e.target;if(!i||!i.matches)return;
     if(i.matches('input[data-act="hist-f"]')){hFilter=i.value;hLimit=12;renderHist()}
+    if(i.id==='garageSel'){switchVehicle(i.value);return}
     if(i.id==='vehPhoto'||i.id==='vehPhotoEmpty'){handlePhoto(i.files&&i.files[0]);i.value=''}
   });
   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#sheet').hidden)closeSheet()});
+  /* Última red de seguridad: nunca abandonar la página con el body bloqueado. */
+  window.addEventListener('pagehide',()=>{unlockBodyScroll();hideProgress();killAIWorker()});
 
   /* ---------- Arranque ---------- */
   AC.render=render;
