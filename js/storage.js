@@ -215,9 +215,141 @@ window.AC = window.AC || {};
 
   /* ---------- Persistencia local y remota ---------- */
   const KEY='tablero-auto-v1';
+
+  /* ---------- Capa IndexedDB (Etapa 1) ----------
+     IndexedDB es el almacen principal: estado completo y fotos/recortes en el
+     store 'files', sin el limite de 5 MB de localStorage. localStorage sigue
+     siendo el espejo sincrono que ya consume app.js. */
+  const DB_NAME='autocare_db';
+  const DB_VERSION=1;
+  const SCHEMA_VERSION=2;
+  const STORE_STATE='state',STORE_FILES='files',STATE_KEY='main';
+  const PHOTO_FIELDS_DB=['photoDataUrl','photoOriginal','photoFallback','photoCutDataUrl'];
+  let dbPromise=null,idbReady=false,idbFailed=false,initPromise=null;
+  let writeChain=Promise.resolve(),memoryBackup=null,knownFileIds=[];
+
+  function idbOpen(){
+    if(dbPromise)return dbPromise;
+    dbPromise=new Promise((resolve,reject)=>{
+      if(!('indexedDB' in window)){reject(new Error('IndexedDB no disponible'));return}
+      const req=indexedDB.open(DB_NAME,DB_VERSION);
+      req.onupgradeneeded=()=>{
+        const db=req.result;
+        if(!db.objectStoreNames.contains(STORE_STATE))db.createObjectStore(STORE_STATE);
+        if(!db.objectStoreNames.contains(STORE_FILES))db.createObjectStore(STORE_FILES,{keyPath:'id'});
+      };
+      req.onsuccess=()=>{idbReady=true;resolve(req.result)};
+      req.onerror=()=>{idbFailed=true;reject(req.error||new Error('No se pudo abrir IndexedDB'))};
+      req.onblocked=()=>{idbFailed=true;reject(new Error('IndexedDB bloqueada'))};
+    });
+    return dbPromise;
+  }
+  function idbRequest(db,store,mode,run){
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction(store,mode),os=tx.objectStore(store);let result;
+      try{result=run(os)}catch(e){reject(e);return}
+      tx.oncomplete=()=>resolve(result&&result.result!==undefined?result.result:undefined);
+      tx.onerror=()=>reject(tx.error||new Error('Error de IndexedDB'));
+      tx.onabort=()=>reject(tx.error||new Error('Transaccion abortada'));
+    });
+  }
+  function idbGet(store,key){return idbOpen().then(db=>idbRequest(db,store,'readonly',os=>os.get(key)))}
+  function idbGetAll(store){return idbOpen().then(db=>idbRequest(db,store,'readonly',os=>os.getAll()))}
+  function idbPut(store,key,value){return idbOpen().then(db=>idbRequest(db,store,'readwrite',os=>key===undefined?os.put(value):os.put(value,key)))}
+  function idbDelete(store,key){return idbOpen().then(db=>idbRequest(db,store,'readwrite',os=>os.delete(key)))}
+  function localMirror(){
+    const snap={};
+    try{
+      const raw=localStorage.getItem(KEY);if(raw!==null)snap[KEY]=raw;
+      const empty=localStorage.getItem(KEY+'-empty');if(empty!==null)snap[KEY+'-empty']=empty;
+    }catch(e){}
+    return snap;
+  }
+  function restoreMirror(snap){
+    try{
+      [KEY,KEY+'-empty'].forEach(k=>{
+        if(Object.prototype.hasOwnProperty.call(snap,k))localStorage.setItem(k,snap[k]);
+        else localStorage.removeItem(k);
+      });
+    }catch(e){}
+  }
+  const isDataUrl=s=>typeof s==='string'&&/^data:image\/[a-z0-9.+-]+;base64,/i.test(s);
+  function photoEntries(data){
+    const out=[];
+    ((data&&data.vehicles)||[]).forEach(r=>{
+      if(!r||!r.vehicle)return;
+      PHOTO_FIELDS_DB.forEach(field=>{
+        const value=r.vehicle[field];
+        if(isDataUrl(value))out.push({id:String(r.id||'main')+':'+field,data:value,field,vehicleId:String(r.id||'main'),schemaVersion:SCHEMA_VERSION});
+      });
+    });
+    return out;
+  }
+  function syncPhotoFiles(data){
+    const files=photoEntries(data),ids=files.map(f=>f.id);
+    const stale=knownFileIds.filter(id=>ids.indexOf(id)<0);
+    knownFileIds=ids;
+    return Promise.all([
+      Promise.all(files.map(f=>idbPut(STORE_FILES,undefined,f))),
+      Promise.all(stale.map(id=>idbDelete(STORE_FILES,id)))
+    ]);
+  }
+  function writeIDB(data){
+    writeChain=writeChain.then(()=>Promise.all([
+      idbPut(STORE_STATE,STATE_KEY,{schemaVersion:SCHEMA_VERSION,app:'autocare',data:data,localStorage:localMirror(),updatedAt:new Date().toISOString()}),
+      syncPhotoFiles(data)
+    ])).catch(()=>{idbFailed=true});
+    return writeChain;
+  }
+  function hydrate(data){
+    if(!data||typeof data!=='object')return false;
+    const fresh=normalize(data);
+    state.vehicles=fresh.vehicles;
+    state.activeId=fresh.activeId;
+    state.settings=fresh.settings;
+    state.updatedAt=fresh.updatedAt;
+    try{document.dispatchEvent(new CustomEvent('autocare:storage-ready',{detail:{changed:true}}))}catch(e){}
+    return true;
+  }
+  function initIDB(){
+    if(initPromise)return initPromise;
+    initPromise=idbOpen().then(()=>idbGet(STORE_STATE,STATE_KEY))
+      .then(rec=>{
+        const snapshot=()=>JSON.parse(JSON.stringify(state));
+        let local=null;
+        try{const raw=localStorage.getItem(KEY);local=raw?JSON.parse(raw):null}catch(e){}
+        if(!rec){writeIDB(snapshot());return}
+        const remote=(rec.schemaVersion&&rec.data)?rec.data:rec;
+        const remoteTs=Number(remote&&remote.updatedAt)||0,localTs=Number(local&&local.updatedAt)||0;
+        /* Gana el estado mas reciente; nunca se pierden registros al migrar. */
+        if(localTs>remoteTs)writeIDB(snapshot());
+        else if(remoteTs>localTs||!local)hydrate(remote);
+      }).catch(()=>{idbFailed=true});
+    return initPromise;
+  }
+  function whenReady(){return initIDB()}
+  function clearIDBStores(){
+    writeChain=writeChain.then(()=>idbOpen().then(db=>Promise.all([
+      idbRequest(db,STORE_STATE,'readwrite',os=>os.clear()),
+      idbRequest(db,STORE_FILES,'readwrite',os=>os.clear())
+    ])).then(()=>{knownFileIds=[]})).catch(()=>{});
+    return writeChain;
+  }
+  function putFile(id,data,meta){
+    const rec={id:String(id),data:data,type:(meta&&meta.type)||'',name:(meta&&meta.name)||'',
+      size:typeof data==='string'?data.length:((data&&data.size)||0),
+      schemaVersion:SCHEMA_VERSION,createdAt:new Date().toISOString()};
+    return idbPut(STORE_FILES,undefined,rec);
+  }
+  function getFile(id){return idbGet(STORE_FILES,String(id))}
+  function listFiles(){return idbGetAll(STORE_FILES)}
+  function deleteFile(id){return idbDelete(STORE_FILES,String(id))}
+
   const cap=n=>{try{return window.claude&&window.claude.use?window.claude.use(n):Promise.resolve(null)}catch(e){return Promise.resolve(null)}};
 
   function load(){
+    /* Migracion automatica localStorage -> IndexedDB (sin perder registros). */
+    initIDB();
     try{
       /* Tras un reinicio no se guarda el estado vacío: sólo un marcador que impide
          que load() vuelva a generar el demo de fábrica. */
@@ -238,18 +370,21 @@ window.AC = window.AC || {};
     }catch(e){return false}
   }
   function save(){
+    const snapshot=()=>JSON.parse(JSON.stringify(state));
+    /* Copia completa ANTES de cualquier recorte por cuota del espejo local. */
+    const full=snapshot();
     try{
       /* El marcador "vacío" sólo aplica al garaje de una sola tarjeta: con
          varios vehículos, borrar el activo no debe descartar los demás. */
       if(state&&state.vehicle&&state.vehicle.empty&&(state.vehicles||[]).length<=1){
         localStorage.removeItem(KEY);
         localStorage.setItem(KEY+'-empty','1');
+        writeIDB(full);
         return;
       }
       if(!persistState()){
-        /* Cuota casi llena: se conserva el PNG ya recortado de cada vehículo
-           (lo esencial para seguir funcionando offline) y se descartan las copias
-           sin recortar. */
+        /* Cuota casi llena: las imagenes ya estan en IndexedDB (sin limite de
+           5 MB); en el espejo localStorage se conserva solo el recorte. */
         (state.vehicles||[]).forEach(r=>{
           const v=r&&r.vehicle;if(!v||(!v.photoOriginal&&!v.photoFallback))return;
           v.photoOriginal=null;v.photoFallback=null;
@@ -258,6 +393,8 @@ window.AC = window.AC || {};
         persistState();
       }
     }catch(e){}
+    /* El estado completo (incluidas fotos y recortes) se guarda en IndexedDB. */
+    writeIDB(full);
   }
 
   /* ---------- Reinicio absoluto ---------- */
@@ -286,7 +423,7 @@ window.AC = window.AC || {};
     try{
       if(typeof indexedDB!=='undefined'&&typeof indexedDB.databases==='function'){
         const list=await indexedDB.databases();
-        await Promise.all(list.filter(x=>/autocare|ac[-_]?(img|photo|bp|blueprint)/i.test(String(x.name||''))).map(x=>new Promise(res=>{
+        await Promise.all(list.filter(x=>String(x.name||'')!==DB_NAME&&/autocare|ac[-_]?(img|photo|bp|blueprint)/i.test(String(x.name||''))).map(x=>new Promise(res=>{
           try{const q=indexedDB.deleteDatabase(x.name);q.onsuccess=q.onerror=q.onblocked=()=>res()}
           catch(e){res()}
         })));
@@ -316,6 +453,9 @@ window.AC = window.AC || {};
   function wipe(){
     clearTimeout(timer);clearTimeout(retry);timer=null;retry=null;again=false;
     clearLocalStorage();
+    /* Se vacian las tiendas propias antes de guardar el estado vacio: la
+       escritura siguiente queda encolada detras de este borrado. */
+    clearIDBStores();
     state=blank();
     save();
     purgeAppStores();
@@ -428,7 +568,10 @@ window.AC = window.AC || {};
   async function exportFile(kind,today,notify){
     const dl=await cap('downloads');if(!dl){notify(tr('exportUnavailable'));return}
     let data,name='autocare-'+today();
-    if(kind==='json'){data=JSON.stringify(snapshot(),null,1);name+='.json'}
+    if(kind==='json'){
+      data=JSON.stringify(Object.assign({app:'AutoCare',schemaVersion:SCHEMA_VERSION,exportedAt:new Date().toISOString()},snapshot()),null,1);
+      name+='.json';
+    }
     else{
       const q=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';
       const rows=[[tr('csv.vehicle'),tr('csv.date'),tr('csv.type'),tr('csv.category'),tr('csv.description'),tr('csv.odo'),tr('csv.volume'),tr('csv.cost'),tr('csv.full')]];
@@ -439,13 +582,39 @@ window.AC = window.AC || {};
     }
     try{await dl.save({filename:name,data});notify(tr('exportReady'))}catch(e){if(!e||e.code!=='declined')notify(tr('exportFail'))}
   }
+  /* Valida origen y estructura antes de sobrescribir el garaje actual. */
+  function validateBackup(j){
+    if(!j||typeof j!=='object'||Array.isArray(j))return {ok:false,msgText:'El archivo no contiene un respaldo válido.'};
+    if(j.app&&String(j.app).toLowerCase()!=='autocare')return {ok:false,msgText:'Este respaldo pertenece a otra aplicación y no se importará.'};
+    const sv=j.schemaVersion==null?1:Number(j.schemaVersion);
+    if(!isFinite(sv)||sv<1||sv>SCHEMA_VERSION)return {ok:false,msgText:'La versión de esquema del respaldo no es compatible.'};
+    if(!Array.isArray(j.entries)&&!Array.isArray(j.vehicles))return {ok:false,msgText:'El respaldo está incompleto: no contiene vehículos ni registros válidos.'};
+    if(j.vehicles!==undefined&&!Array.isArray(j.vehicles))return {ok:false,msgText:'El respaldo está dañado: el garaje no es válido.'};
+    return {ok:true,version:sv};
+  }
+  function restoreMemoryBackup(){
+    if(!memoryBackup)return false;
+    state=normalize(memoryBackup);
+    save();
+    memoryBackup=null;
+    return true;
+  }
   function readImport(file,done){
     if(!file)return;
+    /* Respaldo temporal en memoria: si el archivo falla, no se modifica nada. */
+    memoryBackup=snapshot();
     const rd=new FileReader();
     rd.onload=()=>{
-      try{const j=JSON.parse(rd.result);if(!j||(!Array.isArray(j.entries)&&!Array.isArray(j.vehicles)))throw 0;done(normalize(j),null)}
-      catch(x){done(null,'invalid')}
+      try{
+        const j=JSON.parse(rd.result),v=validateBackup(j);
+        if(!v.ok){const e=new Error(v.msgText);e.msgText=v.msgText;throw e}
+        done(normalize(j),null);
+      }catch(x){
+        const msgText=(x&&x.msgText)||'El archivo está dañado o incompleto; tus datos siguen intactos.';
+        done(null,{msgText:msgText});
+      }
     };
+    rd.onerror=()=>done(null,{msgText:'No se pudo leer el archivo; tus datos siguen intactos.'});
     rd.readAsText(file);
   }
 
@@ -456,7 +625,11 @@ window.AC = window.AC || {};
     get state(){return state},
     set(v){state=v;return state},
     syncKind:()=>syncKind,
-    hasDemo,demoCleared,clearDemo,exportFile,readImport,
+    hasDemo,demoCleared,clearDemo,exportFile,readImport,validateBackup,restoreMemoryBackup,
+    /* Etapa 1: almacenamiento durable y sin limite de 5 MB */
+    DB_NAME,SCHEMA_VERSION,whenReady,
+    isIndexedDBReady:()=>idbReady&&!idbFailed,
+    putFile,getFile,listFiles,deleteFile,
     garage:{list:garageList,select:selectVehicle,add:addVehicle,remove:removeVehicle,
       activeId:()=>state.activeId,count:()=>(state.vehicles||[]).length,label:vehicleLabel}
   };

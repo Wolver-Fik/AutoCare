@@ -1,7 +1,9 @@
 /* AutoCare · Service Worker · caché para uso sin conexión / offline cache */
 'use strict';
 
-const CACHE = 'autocare-v1.3.8';
+/* Etapa 1: sube la version con cada cambio. activate solo purga CacheStorage;
+   nunca borra IndexedDB (autocare_db) ni localStorage. */
+const CACHE = 'autocare-v1.4.0';
 /* El recorte IA carga modulos y pesos desde estos CDNs. El service worker NO
    debe interceptarlos: un cache outage (o una respuesta HTML del offline
    fallback) rompe la carga de WASM/ONNX y deja el recorte en fallback. */
@@ -78,7 +80,7 @@ self.addEventListener('activate', event => {
   event.waitUntil(
     Promise.all([
       caches.keys().then(keys =>
-        Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)))
+        Promise.all(keys.filter(key => key.indexOf('autocare-') === 0 && key !== CACHE).map(key => caches.delete(key)))
       ),
       self.clients.claim()
     ])

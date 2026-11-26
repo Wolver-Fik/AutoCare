@@ -1631,11 +1631,26 @@
     $('#expJ').addEventListener('click',()=>store.exportFile('json',today,toast));
     $('#expC').addEventListener('click',()=>store.exportFile('csv',today,toast));
     $('#impF').addEventListener('change',e=>{
-      store.readImport(e.target.files[0],j=>{
-        if(!j){$('#impBox').innerHTML='<p class="form-err">'+T('importInvalid')+'</p>';return}
+      store.readImport(e.target.files[0],(j,reason)=>{
+        if(!j){
+          const detail=(reason&&reason.msgText&&typeof reason.msgText==='string')?reason.msgText:T('importInvalid');
+          $('#impBox').innerHTML='<p class="form-err">'+esc(detail)+'</p>';
+          return;
+        }
         pendingImport=j;
-        $('#impBox').innerHTML='<p class="hint">'+T('importSummary',{n:pendingImport.entries.length})+'</p><button type="button" class="btn danger sm" id="impGo">'+T('importGo')+'</button>';
-        $('#impGo').addEventListener('click',()=>{state=store.set(pendingImport);pendingImport=null;state.updatedAt=Date.now();store.commit(render);closeSheet();toast(T('importDone'))});
+        const n=Array.isArray(j.entries)?j.entries.length:
+          (Array.isArray(j.vehicles)?j.vehicles.reduce((a,r)=>a+((r&&r.entries&&r.entries.length)||0),0):0);
+        $('#impBox').innerHTML='<p class="hint">'+T('importSummary',{n:n})+'</p><button type="button" class="btn danger sm" id="impGo">'+T('importGo')+'</button>';
+        $('#impGo').addEventListener('click',()=>{
+          try{
+            state=store.set(pendingImport);pendingImport=null;state.updatedAt=Date.now();
+            store.commit(render);closeSheet();toast(T('importDone'));
+          }catch(err){
+            if(store.restoreMemoryBackup)store.restoreMemoryBackup();
+            state=store.state;render();
+            toast((err&&err.msgText)||'No se pudo importar el respaldo; tus datos siguen intactos.');
+          }
+        });
       });
     });
     armDelete($('#delAll'),()=>resetAll(T('delDone')));
@@ -1675,6 +1690,10 @@
   AC.render=render;
   AC.generateBlueprintFromPhoto=generateBlueprintFromPhoto;
   document.addEventListener('ac:langchange',()=>{if(store.setSync)store.setSync(store.syncKind());render()});
+  /* La migracion a IndexedDB termina despues del primer render: se refresca
+     la vista sin reemplazar el objeto de estado que ya usa la interfaz. */
+  document.addEventListener('autocare:storage-ready',()=>{state=store.state;render()});
+  if(store.whenReady)store.whenReady().then(()=>{state=store.state;render()}).catch(()=>{});
 
   I18N.apply();
   const langSel=$('#langSel');
