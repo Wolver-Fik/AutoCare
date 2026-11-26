@@ -13,6 +13,11 @@ AutoCare is a privacy-first, installable Progressive Web App for keeping track o
 ### Features
 
 - **Dashboard** — odometer, average fuel efficiency gauge, cost per distance, monthly spending and quick actions.
+- **Multi-vehicle garage** — switch between all your vehicles, each with its own odometer, services, documents and expenses.
+- **Real cost per kilometre / mile** — fuel, maintenance and fixed costs translated into an accurate cost per distance.
+- **Monthly expense comparison** — compare spending month by month to spot trends before they become surprises.
+- **Key components & due dates sheet** — keep brakes, tyres, filters, insurance and inspection deadlines in one clear record.
+- **Client-side vehicle photo cropping** — crop or reframe your vehicle image locally before saving it; nothing is uploaded.
 - **Maintenance & documents** — reminders by distance, by time or both (whichever comes first), plus insurance, registration and inspection due dates.
 - **Analysis & history** — efficiency per fill-up, spending per month, where the money goes, and a filterable full history with CSV export.
 - **Vehicle card** — editable brand, model, year, body type and paint colour, with a lightweight 3D/SVG illustration or an automatically compressed photo (max 600 px, JPEG).
@@ -58,6 +63,11 @@ AutoCare es una PWA instalable y centrada en la privacidad para llevar el contro
 ### Funciones
 
 - **Tablero** — odómetro, indicador de rendimiento medio, costo por distancia, gasto mensual y acciones rápidas.
+- **Garaje multi-vehículo** — cambia entre todos tus vehículos, cada uno con su odómetro, mantenimientos, documentos y gastos.
+- **Costo real por kilómetro/milla** — combustible, mantenimiento y costes fijos convertidos en un costo exacto por distancia.
+- **Comparación mensual de gastos** — contrasta el gasto mes a mes para detectar tendencias antes de que te sorprendan.
+- **Ficha de componentes clave y vencimientos** — frenos, neumáticos, filtros, seguro e inspecciones en un único registro claro.
+- **Recorte de la foto del vehículo en el cliente** — recorta o reencuadra la imagen en tu dispositivo antes de guardarla; nada se sube.
 - **Mantenimiento y documentos** — recordatorios por distancia, por tiempo o ambos (se activa el que llegue primero), además de seguros, patentes e inspecciones.
 - **Análisis e historial** — rendimiento por carga, gasto por mes, destino del dinero e historial completo filtrable con exportación CSV.
 - **Ficha del vehículo** — marca, modelo, año, carrocería y color editables, con ilustración 3D/SVG ligera o foto comprimida automáticamente (máx. 600 px, JPEG).
