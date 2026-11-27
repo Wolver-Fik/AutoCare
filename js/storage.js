@@ -612,7 +612,7 @@ window.AC = window.AC || {};
     const dl=await cap('downloads');if(!dl){notify(tr('exportUnavailable'));return}
     let data,name='autocare-'+today();
     if(kind==='json'){
-      data=JSON.stringify(Object.assign({app:'AutoCare',schemaVersion:SCHEMA_VERSION,exportedAt:new Date().toISOString()},snapshot()),null,1);
+      data=JSON.stringify(Object.assign({app:'AutoCare',appId:'autocare',schemaVersion:SCHEMA_VERSION,exportDate:todayISO(),exportedAt:new Date().toISOString()},snapshot()),null,1);
       name+='.json';
     }
     else{
@@ -642,6 +642,7 @@ window.AC = window.AC || {};
   function validateBackup(j){
     if(!j||typeof j!=='object'||Array.isArray(j))return {ok:false,msgText:'El archivo no contiene un respaldo válido.'};
     if(j.app&&String(j.app).toLowerCase()!=='autocare')return {ok:false,msgText:'Este respaldo pertenece a otra aplicación y no se importará.'};
+    if(j.appId&&String(j.appId).toLowerCase()!=='autocare')return {ok:false,msgText:'Este respaldo pertenece a otra aplicación y no se importará.'};
     const sv=j.schemaVersion==null?1:Number(j.schemaVersion);
     if(!isFinite(sv)||sv<1||sv>SCHEMA_VERSION)return {ok:false,msgText:'La versión de esquema del respaldo no es compatible.'};
     if(!Array.isArray(j.entries)&&!Array.isArray(j.vehicles))return {ok:false,msgText:'El respaldo está incompleto: no contiene vehículos ni registros válidos.'};

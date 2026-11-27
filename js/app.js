@@ -1051,7 +1051,8 @@
     const t=today();
     let h='<div class="card-h"><h2>'+T('maintenance')+'</h2><button class="btn sm" data-act="rem-add"><svg width="20" height="20" class="ico" style="width:16px;height:16px"><use href="#i-plus"/></svg>'+T('add')+'</button></div>';
     if(!state.reminders.length)h+='<p class="empty">'+T('noReminders')+'</p>';
-    else h+='<div class="list">'+state.reminders.map(r=>{
+    else {
+      const remCards=state.reminders.map(r=>{
       const s=TL.remStatus(r,sm.odo,S(),t,sm.rate);
       const edit='<button class="btn sm" data-act="rem-edit" data-id="'+esc(r.id)+'" aria-label="'+esc(T('editRem',{n:r.name}))+'"><svg width="20" height="20" class="ico" style="width:16px;height:16px"><use href="#i-edit"/></svg></button>';
       if(s.state==='unset')return'<article class="rem"><div class="rem-h"><b>'+esc(r.name)+'</b><span class="pill">'+T('noData')+'</span></div><div class="bar"><i style="width:0"></i></div><p class="rem-s">'+T('needLastChange')+'</p><div class="rem-a"><button class="btn sm" data-act="rem-edit" data-id="'+esc(r.id)+'">'+T('loadLastChange')+'</button></div></article>';
@@ -1067,7 +1068,12 @@
         +'<div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.min(100,Math.round(s.pct*100))+'" aria-label="'+esc(r.name)+'"><i style="width:'+Math.min(100,Math.round(s.pct*100))+'%"></i></div>'
         +'<div class="rem-m"><span>'+m1+'</span><span>'+m2+'</span></div>'+(sub.length?'<p class="rem-s">'+esc(sub.join(' · '))+'</p>':'')
         +'<div class="rem-a">'+edit+'<button class="btn sm" data-act="rem-log" data-id="'+esc(r.id)+'">'+T('register')+'</button></div></article>';
-    }).join('')+'</div>';
+      });
+      const first=remCards.slice(0,30).join('');
+      const rest=remCards.slice(30).join('');
+      h+='<div class="list">'+first+'</div>';
+      if(rest)h+='<details class="show-more"><summary class="btn sm">'+T('viewMore',{n:remCards.length-30})+'</summary><div class="list">'+rest+'</div></details>';
+    }
     $('#rems').innerHTML=h;
   }
 
@@ -1075,14 +1081,20 @@
     const t=today();
     let h='<div class="card-h"><h2>'+T('documentation')+'</h2><button class="btn sm" data-act="doc-add"><svg width="20" height="20" class="ico" style="width:16px;height:16px"><use href="#i-plus"/></svg>'+T('add')+'</button></div>';
     if(!state.docs.length)h+='<p class="empty">'+T('noDocs')+'</p>';
-    else h+='<ul class="list">'+state.docs.map(d=>{
+    else {
+      const docCards=state.docs.map(d=>{
       const s=TL.docStatus(d,S(),t);
       const pill=s.state==='unset'?'<span class="pill">'+T('noDate')+'</span>':'<span class="pill '+s.state+'">'+(s.state==='over'?T('overdue'):s.state==='soon'?T('soon'):T('upToDate'))+'</span>';
       const dd=s.state==='unset'?T('addDueDate'):(s.days<0?T('docsExpired',{x:ago(-s.days)}):T('docsDue',{x:inn(s.days)}))+' · '+fdate(d.due,true);
       return'<li class="doc"><svg width="20" height="20" class="ico"><use href="#i-doc"/></svg><div><b>'+esc(d.name)+pill+'</b><span class="d">'+esc(dd)+'</span></div>'
         +'<button class="btn sm" data-act="'+(s.state==='unset'?'doc-edit':'doc-renew')+'" data-id="'+esc(d.id)+'">'+(s.state==='unset'?T('addDate'):T('renew'))+'</button>'
         +'<button class="icon-btn" style="width:36px;height:36px" data-act="doc-edit" data-id="'+esc(d.id)+'" aria-label="'+esc(T('editDoc',{n:d.name}))+'"><svg width="20" height="20" class="ico" style="width:16px;height:16px"><use href="#i-edit"/></svg></button></li>';
-    }).join('')+'</ul>';
+      });
+      const first=docCards.slice(0,30).join('');
+      const rest=docCards.slice(30).join('');
+      h+='<ul class="list">'+first+'</ul>';
+      if(rest)h+='<details class="show-more"><summary class="btn sm">'+T('viewMore',{n:docCards.length-30})+'</summary><ul class="list">'+rest+'</ul></details>';
+    }
     $('#docs').innerHTML=h;
   }
 

@@ -20,6 +20,8 @@ AutoCare is a privacy-first, installable Progressive Web App for keeping track o
 - **Client-side vehicle photo cropping** — crop or reframe your vehicle image locally before saving it; nothing is uploaded.
 - **Maintenance & documents** — reminders by distance, by time or both (whichever comes first), plus insurance, registration and inspection due dates.
 - **Analysis & history** — efficiency per fill-up, spending per month, where the money goes, and a filterable full history with CSV export.
+- **Tyres & depreciation** — track tyre size, fitment, rotation and expected life per vehicle, plus purchase/current value and depreciation; JSON backups carry `schemaVersion`, `appId`, the export date and these records.
+- **Fast history & charts** — the history shows 12 entries with a "view more" button and charts plot the last 24 fill-ups, so long garages stay smooth on mobile.
 - **Vehicle card** — editable brand, model, year, body type and paint colour, with a lightweight 3D/SVG illustration or an automatically compressed photo (max 600 px, JPEG).
 - **8 languages** — English, Español, Português, Français, Italiano, Deutsch, Русский and 日本語. Detected from `navigator.language`, remembered in `localStorage`, switchable from the header.
 - **Units & currency** — metric (km, L, km/L) or imperial (mi, gal, MPG) presets, custom unit combinations, and any valid ISO 4217 currency formatted with `Intl.NumberFormat`.
@@ -70,6 +72,8 @@ AutoCare es una PWA instalable y centrada en la privacidad para llevar el contro
 - **Recorte de la foto del vehículo en el cliente** — recorta o reencuadra la imagen en tu dispositivo antes de guardarla; nada se sube.
 - **Mantenimiento y documentos** — recordatorios por distancia, por tiempo o ambos (se activa el que llegue primero), además de seguros, patentes e inspecciones.
 - **Análisis e historial** — rendimiento por carga, gasto por mes, destino del dinero e historial completo filtrable con exportación CSV.
+- **Neumáticos y depreciación** — registra medida, instalación, rotación y vida útil por vehículo, además del valor de compra/actual y su depreciación; el JSON incluye `schemaVersion`, `appId`, la fecha de exportación y estos datos.
+- **Historial y gráficos rápidos** — el historial muestra 12 entradas con botón «ver más» y los gráficos usan las últimas 24 cargas, para que garajes largos sigan fluidos en móvil.
 - **Ficha del vehículo** — marca, modelo, año, carrocería y color editables, con ilustración 3D/SVG ligera o foto comprimida automáticamente (máx. 600 px, JPEG).
 - **8 idiomas** — English, Español, Português, Français, Italiano, Deutsch, Русский y 日本語. Se detecta con `navigator.language`, se recuerda en `localStorage` y se cambia desde la cabecera.
 - **Unidades y moneda** — presets métrico (km, L, km/L) e imperial (mi, gal, MPG), combinaciones personalizadas y cualquier código ISO 4217 válido formateado con `Intl.NumberFormat`.
