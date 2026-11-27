@@ -11,8 +11,17 @@
   /* ---------- Lógica de cálculo (sin DOM) ---------- */
   function currentOdo(E){let m=null;E.forEach(e=>{if(AC.core.hasOdo(e)&&(m==null||e.odo>m))m=e.odo});return m}
 
+  /* Orden combinado: si fecha y odómetro coinciden en dirección manda la fecha
+     (cronología); si se contradicen (corrección histórica o carga fuera de
+     orden) manda el odómetro, que es la magnitud física que delimita el tramo. */
+  function fuelOrder(a,b){
+    const da=String(a.date||''),db=String(b.date||''),oa=Number(a.odo)||0,ob=Number(b.odo)||0;
+    if(da!==db&&((da<db&&oa>ob)||(da>db&&oa<ob)))return oa-ob;
+    if(da!==db)return da<db?-1:1;
+    return oa-ob;
+  }
   function fuelSegments(E){
-    const f=E.filter(e=>e.type==='fuel'&&AC.core.hasOdo(e)&&e.vol>0).sort((a,b)=>a.odo-b.odo||(a.date<b.date?-1:a.date>b.date?1:0));
+    const f=E.filter(e=>e.type==='fuel'&&AC.core.hasOdo(e)&&e.vol>0).slice().sort(fuelOrder);
     const out=[];let prev=null,acc=0;
     f.forEach(e=>{
       if(prev)acc+=e.vol;
@@ -57,17 +66,38 @@
   }
 
   /* Costo real por distancia: combustible + mantenimiento/reparaciones entre
-     los kilómetros efectivamente registrados (max − min del odómetro). */
-  function costPerDistance(E){
-    let cost=0,min=null,max=null;
-    E.forEach(e=>{
-      const g=e.type==='fuel'?'fuel':(e.cat&&AC.core.CATS[e.cat]?AC.core.CATS[e.cat].g:'');
-      if(g==='fuel'||g==='maint'||g==='repair')cost+=e.cost||0;
+     los kilómetros efectivamente registrados (max − min del odómetro). El
+     período limita tanto las fechas como el rango válido de odómetro. */
+  const COST_PERIODS=['all','12m','30d'];
+  function costGroup(e){
+    const g=e.type==='fuel'?'fuel':(e.cat&&AC.core.CATS[e.cat]?AC.core.CATS[e.cat].g:'');
+    return g==='fuel'||g==='maint'||g==='repair';
+  }
+  function costPeriodStart(period,todayISO){
+    const day=todayISO||AC.core.todayISO();
+    if(period==='12m')return AC.core.addMonths(day.slice(0,7)+'-01',-12);
+    if(period==='30d')return AC.core.addDays(day,-30);
+    return null;
+  }
+  function costPerDistance(E,period,todayISO){
+    period=COST_PERIODS.indexOf(period)>=0?period:'all';
+    const all=(E||[]).filter(e=>e&&e.date),start=costPeriodStart(period,todayISO);
+    const inPeriod=start?all.filter(e=>e.date>=start):all;
+    let min=null,max=null;
+    inPeriod.forEach(e=>{if(AC.core.hasOdo(e)){if(min==null||e.odo<min)min=e.odo;if(max==null||e.odo>max)max=e.odo}});
+    let cost=0,excluded=0;
+    inPeriod.forEach(e=>{
+      if(!costGroup(e))return;
+      if(!AC.core.hasOdo(e)||(min!=null&&(e.odo<min||e.odo>max))){excluded++;return}
+      cost+=e.cost||0;
     });
-    E.forEach(e=>{if(AC.core.hasOdo(e)){if(min==null||e.odo<min)min=e.odo;if(max==null||e.odo>max)max=e.odo}});
     let dist=(min!=null&&max>min)?max-min:0;
-    if(!(dist>0))fuelSegments(E).forEach(s=>{dist+=s.dist});
-    return{cost,dist,value:dist>0?cost/dist:null};
+    if(!(dist>0))fuelSegments(inPeriod).forEach(s=>{dist+=s.dist});
+    const fullCost=all.reduce((a,e)=>a+(costGroup(e)?(e.cost||0):0),0);
+    /* Cobertura parcial: hay registros fuera del período, sin odómetro o con
+       un odómetro fuera del rango que sí se usó para la distancia. */
+    const partial=!!((start&&inPeriod.length<all.length)||excluded>0||fullCost-cost>0.005);
+    return{cost,dist,value:dist>0?cost/dist:null,partial,period,from:start,min,max,excluded,coveredCost:cost,fullCost};
   }
 
   /* ---------- Etapa 2: neumáticos y valor del vehículo (sin DOM) ---------- */
@@ -92,19 +122,19 @@
     return{purchase,current,diff,pct,spend,spendPct,net:diff==null?null:diff-spend};
   }
 
-  function summarize(st,today){
+  function summarize(st,today,period){
     const E=st.entries,odo=currentOdo(E),segs=fuelSegments(E);
     let dist=0,vol=0,best=null;segs.forEach(s=>{dist+=s.dist;vol+=s.vol;best=best==null?s.kmL:Math.max(best,s.kmL)});
     const avg=vol>0?dist/vol:null,last=segs.length?segs[segs.length-1].kmL:null;
     const sum=f=>E.reduce((a,e)=>a+(f(e)?(e.cost||0):0),0);
     const mk=today.slice(0,7),pk=AC.core.addMonths(mk+'-01',-1).slice(0,7);
     const total=sum(()=>true),monthCost=sum(e=>e.date.slice(0,7)===mk),prevCost=sum(e=>e.date.slice(0,7)===pk);
-    const fuels=E.filter(e=>e.type==='fuel'&&AC.core.hasOdo(e)).sort((a,b)=>a.odo-b.odo||(a.date<b.date?-1:1));
+    const fuels=E.filter(e=>e.type==='fuel'&&AC.core.hasOdo(e)).sort(fuelOrder);
     let cpk=null;
     if(fuels.length>=2){const a=fuels[0],b=fuels[fuels.length-1],d=b.odo-a.odo;
       if(d>0){let c=0;E.forEach(e=>{if(e!==a&&e.date>=a.date&&e.date<=b.date)c+=e.cost||0});cpk=c/d}}
     let lastDate=null;E.forEach(e=>{if(AC.core.hasOdo(e)&&(lastDate==null||e.date>lastDate))lastDate=e.date});
-    return{odo,segs,avg,last,best,total,monthCost,prevCost,cpk,cpd:costPerDistance(E),rate:dailyRate(E),lastDate,count:E.length};
+    return{odo,segs,avg,last,best,total,monthCost,prevCost,cpk,cpd:costPerDistance(E,period,today),rate:dailyRate(E),lastDate,count:E.length};
   }
 
   function monthlySpend(E,today,n){
@@ -546,6 +576,9 @@
      abortos de Safari/WebKit con ONNX grandes sin caché persistente. */
   const BG_MODEL_ID='Xenova/segformer-b0-finetuned-ade-512-512';
   const BG_MODEL_IDS=[BG_MODEL_ID];
+  const AI_MODEL_FLAG='autocare-ai-model-ready';
+  const aiModelReady=()=>{try{return localStorage.getItem(AI_MODEL_FLAG)==='1'}catch(e){return false}};
+  function markAIModelReady(){try{localStorage.setItem(AI_MODEL_FLAG,'1')}catch(e){}}
   const MIN_VISIBLE_MASK_RATIO=0.08; /* <8% visible => máscara rota / recorte vacío */
   /* Móvil = pantalla < 900 px O puntero grueso (cualquier dispositivo táctil). */
   const isMobileAI=()=>!!(window.matchMedia&&(window.matchMedia('(max-width:899px)').matches||window.matchMedia('(pointer:coarse)').matches));
@@ -617,7 +650,7 @@
     const job=activeAIJob;
     if(!job||!d||d.id!==job.id)return; /* descarta respuestas de un trabajo anterior */
     if(d.type==='progress'){job.onPct(d.pct);return}
-    if(d.type==='model'){bgModelUsed=d.model||'';return}
+    if(d.type==='model'){bgModelUsed=d.model||'';markAIModelReady();return}
     if(d.type==='done'){
       activeAIJob=null;
       try{
@@ -806,6 +839,9 @@
       persistPhoto(v,inModal,paint,tools);
       cutToast(T('photoFallback'));return false;
     }
+    /* Aviso breve: la primera vez hay que descargar el modelo; sin conexión
+       el encuadre manual/offline de arriba sigue funcionando igual. */
+    if(!aiModelReady())cutToast(T('aiFirstDownload'));
     showProgress();setProgress(4);
     try{
       const png=await cutoutWithAI(src,setProgress);
@@ -988,7 +1024,7 @@
   function render(){
     $('#vName').textContent=isConfigured()?(AC.core.vehicleLabel(veh())||S().name||T('myCar')):T('noVehicle');
     $('#demo').hidden=!hasDemo();
-    const sm=TL.summarize(state,today());
+    const sm=TL.summarize(state,today(),costPeriod);
     renderVehicle();renderHero(sm);renderStats(sm);renderAlerts(sm);renderRems(sm);renderDocs();renderTires(sm);renderQuick(sm);
     renderEff();renderSpend();renderCats();renderHist();renderCost(sm);renderValue();renderCompare();
     $('#foot').textContent=T('footer');
@@ -1179,7 +1215,7 @@
   /* ---------- Etapa 2 · Valor y depreciación ---------- */
   function renderValue(){
     const v=state.value||{},vi=TL.valueInfo(v,state.entries);
-    let h='<div class="card-h"><h2>'+T('valueTitle')+'</h2><button type="button" class="btn sm" data-act="value-edit">'
+    let h='<div class="card-h"><h2>'+T('netValuation')+'</h2><button type="button" class="btn sm" data-act="value-edit">'
       +'<svg width="20" height="20" class="ico" style="width:16px;height:16px"><use href="#i-gauge"/></svg>'+T(vi?'valueEdit':'valueAdd')+'</button></div>';
     if(!vi){$('#value').innerHTML=h+'<p class="empty">'+T('valueEmpty')+'</p>';return}
     const lines=[];
@@ -1194,23 +1230,33 @@
     if(vi.spendPct!=null)lines.push('<div class="value-line"><span>'+T('valueRelation')+'</span><b>'+nf(vi.spendPct,1)+'%</b></div>');
     if(vi.net!=null)lines.push('<div class="value-line"><span>'+T('valueNet')+'</span><b>'+money(vi.net,0)+'</b></div>');
     $('#value').innerHTML=h+'<div class="value-card"><div class="value-big">'+(vi.current!=null?money(vi.current,0):'–')+'</div>'
-      +lines.join('')+'<p class="value-hint">'+T('valueHint')+'</p></div>';
+      +lines.join('')+'<p class="value-hint">'+T('netValuationHint')+'</p></div>';
   }
 
   /* ---------- Costo real por km / milla ---------- */
+  let costPeriod='all';
   function renderCost(sm){
+    sm=sm||TL.summarize(state,today(),costPeriod);
     const c=sm.cpd;
-    const sum=f=>state.entries.reduce((a,e)=>a+(f(e)?(e.cost||0):0),0);
+    /* Los desgloses usan exactamente el mismo período y rango de odómetro que
+       el cálculo principal, para que las cifras cuadren con el resultado. */
+    const scoped=e=>e&&e.date&&(!c.from||e.date>=c.from)&&AC.core.hasOdo(e)
+      &&(c.min==null||(e.odo>=c.min&&e.odo<=c.max));
+    const sum=f=>state.entries.reduce((a,e)=>a+(scoped(e)&&f(e)?(e.cost||0):0),0);
     const fuel=sum(e=>e.type==='fuel'),maint=sum(e=>e.type==='exp'&&(e.cat==='service'||e.cat==='tires')),repair=sum(e=>e.type==='exp'&&e.cat==='repair');
     const line=(l,v)=>'<div class="cost-line"><span>'+l+'</span><b>'+v+'</b></div>';
+    const chip=(v,l)=>'<label class="chip"><input type="radio" name="cp" value="'+v+'" data-act="cost-p"'+(costPeriod===v?' checked':'')+'><span>'+l+'</span></label>';
     $('#cost').innerHTML='<div class="card-h"><h2>'+T('costPer',{u:dU()})+'</h2><span class="lbl">'+T('costReal')+'</span></div>'
+      +'<div class="chips hist-f" role="radiogroup" aria-label="'+esc(T('costPeriodAria'))+'">'
+      +chip('all',T('costPeriodAll'))+chip('12m',T('costPeriod12m'))+chip('30d',T('costPeriod30d'))+'</div>'
       +'<div class="cost-big">'+(c.value!=null?money(c.value*dF(),2):'–')+'<small>/'+esc(dU())+'</small></div>'
       +'<div class="cost-lines">'
       +line(T('costFuel'),money(fuel,0))
       +line(T('costMaintRepair'),money(maint+repair,0))
       +line(T('costRepairDetail'),money(repair,0))
       +line(T('costDistance'),nf(dOut(c.dist))+' '+dU())
-      +'</div><p class="hint">'+T('costFormula')+'</p>';
+      +'</div>'+(c.partial?'<p class="hint">'+T('costPartial')+'</p>':'')
+      +'<p class="hint">'+T('costFormula')+'</p>';
   }
 
   /* ---------- Comparación mes actual vs. anterior ---------- */
@@ -1386,6 +1432,10 @@
       el.textContent=(ev&&ev.detail&&ev.detail.message)||TEXT;
     }
     window.addEventListener('onStorageError',showStorageError);
+    /* Sólo se retira el aviso cuando IndexedDB confirma un guardado posterior. */
+    window.addEventListener('onStorageSaved',()=>{
+      const el=document.getElementById('storageErrorBanner');if(el&&el.remove)el.remove();
+    });
     if(store&&store.lastStorageError&&store.lastStorageError())showStorageError({detail:store.lastStorageError()});
   })();
   const cutToast=m=>toast(m,3000);
@@ -1479,9 +1529,18 @@
   }
   function openVehicleDelete(){
     const id=store.garage.activeId(),label=AC.core.vehicleLabel(veh());
-    openSheet(head(T('deleteVehicle'))+'<p class="hint">'+T('deleteVehicleHint',{n:esc(label)})+(store.garage.count()===1?'<br>'+T('lastVehicleHint'):'')+'</p>'
+    const r=(state.vehicles||[]).find(x=>x.id===id)||{};
+    const tireData=!!(r.tire&&(r.tire.brandSize||r.tire.installDate||r.tire.installOdo!=null||r.tire.lifeKm>0||r.tire.rotDate||r.tire.rotOdo!=null));
+    const valueData=!!(r.value&&(r.value.purchase!=null||r.value.current!=null));
+    const photoData=!!(r.vehicle&&(r.vehicle.photoDataUrl||r.vehicle.photoOriginal||r.vehicle.photoCutDataUrl));
+    const records=(r.entries||[]).length+(r.reminders||[]).length+(r.docs||[]).length+(r.components||[]).length
+      +(tireData?1:0)+(valueData?1:0)+(photoData?1:0);
+    openSheet(head(T('deleteVehicle'))+'<p class="hint">'+T('deleteVehicleHint',{n:esc(label)})+(store.garage.count()===1?'<br>'+T('lastVehicleHint'):'')
+      +(records?'<br>'+T('deleteVehicleRecordsConfirm',{n:records}):'')+'</p>'
       +'<div class="sh-foot"><button type="button" class="btn" data-close>'+T('cancel')+'</button><button type="button" class="btn danger" id="delVehGo">'+T('deleteVehicle')+'</button></div>','#delVehGo');
     armDelete($('#delVehGo'),()=>{
+      /* Doble confirmación (botón armado + diálogo) sólo si hay algo que perder. */
+      if(records&&!window.confirm(T('deleteVehicleRecordsConfirm',{n:records})))return;
       store.garage.remove(id);
       if(typeof AC.clearVisuals==='function')AC.clearVisuals();
       commit();closeSheet();toast(T('vehicleDeleted'));
@@ -1831,10 +1890,31 @@
   document.addEventListener('change',e=>{
     const i=e.target;if(!i||!i.matches)return;
     if(i.matches('input[data-act="hist-f"]')){hFilter=i.value;hLimit=12;renderHist()}
+    if(i.matches('input[data-act="cost-p"]')){
+      costPeriod=i.value;
+      const sm=TL.summarize(state,today(),costPeriod);
+      renderStats(sm);renderCost(sm);
+    }
     if(i.id==='garageSel'){switchVehicle(i.value);return}
     if(i.id==='vehPhoto'||i.id==='vehPhotoEmpty'){handlePhoto(i.files&&i.files[0]);i.value=''}
   });
-  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#sheet').hidden)closeSheet()});
+  /* Navegación circular con Tab dentro del modal: el foco nunca escapa al
+     fondo mientras el diálogo está abierto (teclado y lectores de pantalla). */
+  function sheetFocusables(){
+    const wrap=$('#sheetBody');if(!wrap)return [];
+    const sel='a[href],area[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+    return Array.prototype.filter.call(wrap.querySelectorAll(sel),el=>
+      !el.hidden&&el.getAttribute('aria-hidden')!=='true'&&el.getClientRects().length>0);
+  }
+  document.addEventListener('keydown',e=>{
+    const sheet=$('#sheet');
+    if(e.key==='Escape'&&sheet&&!sheet.hidden){closeSheet();return}
+    if(e.key!=='Tab'||!sheet||sheet.hidden)return;
+    const items=sheetFocusables();if(!items.length)return;
+    const first=items[0],last=items[items.length-1],inside=sheet.contains(document.activeElement);
+    if(!inside||(e.shiftKey&&document.activeElement===first)){e.preventDefault();(e.shiftKey?last:first).focus()}
+    else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}
+  });
   /* Última red de seguridad: nunca abandonar la página con el body bloqueado. */
   window.addEventListener('pagehide',()=>{unlockBodyScroll();hideProgress();killAIWorker()});
 

@@ -3,7 +3,7 @@
 
 /* Etapa 2: sube la version con cada cambio. activate solo purga CacheStorage;
    nunca borra IndexedDB (autocare_db) ni localStorage. */
-const CACHE = 'autocare-v1.5.1';
+const CACHE = 'autocare-v1.5.2';
 /* El recorte IA carga modulos y pesos desde estos CDNs. El service worker NO
    debe interceptarlos: un cache outage (o una respuesta HTML del offline
    fallback) rompe la carga de WASM/ONNX y deja el recorte en fallback. */
@@ -106,7 +106,9 @@ self.addEventListener('fetch', event => {
       fetch(req).then(res => {
         if (res && res.ok) {
           const copy = res.clone();
-          caches.open(CACHE).then(cache => cache.put(req, copy)).catch(() => {});
+          event.waitUntil(
+            caches.open(CACHE).then(cache => cache.put(req, copy)).catch(() => {})
+          );
         }
         return res;
       }).catch(() =>
@@ -123,7 +125,9 @@ self.addEventListener('fetch', event => {
       const network = fetch(req).then(res => {
         if (res && (res.ok || res.type === 'opaque')) {
           const copy = res.clone();
-          caches.open(CACHE).then(cache => cache.put(req, copy)).catch(() => {});
+          event.waitUntil(
+            caches.open(CACHE).then(cache => cache.put(req, copy)).catch(() => {})
+          );
         }
         return res;
       }).catch(() => cached || Response.error());

@@ -25,6 +25,15 @@ window.AC = window.AC || {};
   let seq=0;
   const rid=p=>p+Date.now().toString(36)+(++seq).toString(36)+Math.random().toString(36).slice(2,5);
   const DATE_RE=/^\d{4}-\d{2}-\d{2}$/;
+  /* Una fecha válida no sólo tiene el formato: también debe existir en el
+     calendario (2024-02-30, por ejemplo, se rechaza al importar). */
+  function isRealDate(s){
+    if(typeof s!=='string'||!DATE_RE.test(s))return false;
+    const y=Number(s.slice(0,4)),m=Number(s.slice(5,7)),d=Number(s.slice(8,10));
+    if(y<1000||m<1||m>12||d<1||d>31)return false;
+    const dt=new Date(Date.UTC(y,m-1,d));
+    return dt.getUTCFullYear()===y&&dt.getUTCMonth()===m-1&&dt.getUTCDate()===d;
+  }
   function docKeyOf(name){
     const n=String(name||'').toLowerCase();if(!n)return null;
     const words={
@@ -177,7 +186,7 @@ window.AC = window.AC || {};
     if(!raw||typeof raw!=='object')return null;
     const name=typeof raw.name==='string'?raw.name.trim().slice(0,60):'';
     const key=DOC_KEYS.indexOf(raw.key)>=0?raw.key:docKeyOf(name);
-    const due=typeof raw.due==='string'&&DATE_RE.test(raw.due)?raw.due:null;
+    const due=isRealDate(raw.due)?raw.due:null;
     const d={id:typeof raw.id==='string'&&raw.id?raw.id:rid('c'),name:name||(key?tr('doc.'+key):''),due,
       note:typeof raw.note==='string'?raw.note.slice(0,160):''};
     if(key)d.key=key;
@@ -189,7 +198,7 @@ window.AC = window.AC || {};
     const odo=Number(raw.odo);
     const km=Number(raw.intervalKm),mo=Number(raw.intervalMonths);
     const c={id:typeof raw.id==='string'&&raw.id?raw.id:rid('p'),key:raw.key,
-      date:typeof raw.date==='string'&&DATE_RE.test(raw.date)?raw.date:null,
+      date:isRealDate(raw.date)?raw.date:null,
       odo:Number.isFinite(odo)&&odo>=0?odo:null,
       intervalKm:Number.isFinite(km)&&km>0?km:null,
       intervalMonths:Number.isFinite(mo)&&mo>0?Math.round(mo):null};
@@ -200,10 +209,10 @@ window.AC = window.AC || {};
     const io=Number(raw.installOdo),lk=Number(raw.lifeKm),ro=Number(raw.rotOdo);
     const t={
       brandSize:typeof raw.brandSize==='string'?raw.brandSize.trim().slice(0,60):'',
-      installDate:typeof raw.installDate==='string'&&DATE_RE.test(raw.installDate)?raw.installDate:null,
+      installDate:isRealDate(raw.installDate)?raw.installDate:null,
       installOdo:Number.isFinite(io)&&io>=0?io:null,
       lifeKm:Number.isFinite(lk)&&lk>0?lk:null,
-      rotDate:typeof raw.rotDate==='string'&&DATE_RE.test(raw.rotDate)?raw.rotDate:null,
+      rotDate:isRealDate(raw.rotDate)?raw.rotDate:null,
       rotOdo:Number.isFinite(ro)&&ro>=0?ro:null
     };
     if(raw.demo)t.demo=true;
@@ -219,13 +228,51 @@ window.AC = window.AC || {};
     if(raw.demo)v.demo=true;
     return v;
   }
+  /* Los registros se sanean por tipo: fecha real, odómetro >= 0 (obligatorio en
+     combustible y odómetro), volumen > 0 sólo en combustible y coste >= 0. */
+  function normalizeEntry(raw){
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))return null;
+    const id=typeof raw.id==='string'&&raw.id?raw.id:null;
+    const type=raw.type;
+    if(!id||['fuel','exp','odo'].indexOf(type)<0||!isRealDate(raw.date))return null;
+    const cost=Number(raw.cost),odo=Number(raw.odo);
+    const validOdo=raw.odo!=null&&Number.isFinite(odo)&&odo>=0?odo:null;
+    const validCost=Number.isFinite(cost)&&cost>=0?cost:0;
+    if(type==='fuel'){
+      const vol=Number(raw.vol);
+      if(validOdo==null||!Number.isFinite(vol)||vol<=0)return null;
+      return{id,type,date:raw.date,odo:validOdo,vol,cost:validCost,full:raw.full!==false};
+    }
+    if(type==='odo'){
+      if(validOdo==null)return null;
+      return{id,type,date:raw.date,odo:validOdo,cost:0};
+    }
+    const out={id,type,date:raw.date,cat:CATS[raw.cat]?raw.cat:'other',
+      desc:typeof raw.desc==='string'?raw.desc.slice(0,80):'',cost:validCost,odo:validOdo};
+    if(raw.demo)out.demo=true;
+    return out;
+  }
+  function normalizeReminder(raw){
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))return null;
+    const name=typeof raw.name==='string'?raw.name.trim().slice(0,60):'';
+    if(!name)return null;
+    const lo=Number(raw.lastOdo),ik=Number(raw.intervalKm),im=Number(raw.intervalMonths);
+    const r={id:typeof raw.id==='string'&&raw.id?raw.id:rid('r'),name,
+      cat:CATS[raw.cat]?raw.cat:'service',
+      intervalKm:Number.isFinite(ik)&&ik>0?ik:null,
+      intervalMonths:Number.isFinite(im)&&im>0?Math.round(im):null,
+      lastOdo:raw.lastOdo!=null&&Number.isFinite(lo)&&lo>=0?lo:null,
+      lastDate:isRealDate(raw.lastDate)?raw.lastDate:null};
+    if(raw.demo)r.demo=true;
+    return r;
+  }
   function normalizeRecord(raw){
     const r=raw&&typeof raw==='object'?raw:{};
     return{
       id:typeof r.id==='string'&&r.id?r.id:rid('v'),
       vehicle:normalizeVehicle(r.vehicle),
-      entries:(Array.isArray(r.entries)?r.entries:[]).filter(e=>e&&e.id&&e.date&&e.type),
-      reminders:Array.isArray(r.reminders)?r.reminders:[],
+      entries:(Array.isArray(r.entries)?r.entries:[]).map(normalizeEntry).filter(Boolean),
+      reminders:(Array.isArray(r.reminders)?r.reminders:[]).map(normalizeReminder).filter(Boolean),
       docs:(Array.isArray(r.docs)?r.docs:[]).map(normalizeDoc).filter(Boolean),
       components:(Array.isArray(r.components)?r.components:[]).map(normalizeComponent).filter(Boolean),
       tire:normalizeTire(r.tire),
@@ -271,6 +318,7 @@ window.AC = window.AC || {};
   let lastIDBData=null;
   const STORAGE_ERROR_MESSAGE='Error al guardar los datos en este dispositivo. Exporta un respaldo JSON por seguridad.';
   let storageErrorHandler=null,lastStorageError=null,storageErrorActive=false;
+  let storageSavedHandler=null,lastStorageSaved=null,migrationPending=false;
   function emitStorageError(err,origin){
     if(storageErrorActive)return;
     storageErrorActive=true;
@@ -281,7 +329,24 @@ window.AC = window.AC || {};
       try{const ev=document.createEvent('CustomEvent');ev.initCustomEvent('onStorageError',false,false,lastStorageError);window.dispatchEvent(ev)}catch(e2){}
     }
   }
+  /* El éxito se comunica sólo cuando la transacción de IndexedDB termina. */
+  function emitStorageSaved(){
+    lastStorageSaved={at:new Date().toISOString()};
+    try{if(typeof storageSavedHandler==='function')storageSavedHandler(lastStorageSaved)}catch(e){}
+    try{window.dispatchEvent(new CustomEvent('onStorageSaved',{detail:lastStorageSaved}))}
+    catch(e){
+      try{const ev=document.createEvent('CustomEvent');ev.initCustomEvent('onStorageSaved',false,false,lastStorageSaved);window.dispatchEvent(ev)}catch(e2){}
+    }
+  }
   function clearStorageError(){storageErrorActive=false;lastStorageError=null;}
+  /* Persistencia durables: petición explícita del navegador, sin bloquear el arranque. */
+  function requestPersistentStorage(){
+    try{
+      if(navigator&&navigator.storage&&typeof navigator.storage.persist==='function'){
+        Promise.resolve(navigator.storage.persist()).catch(()=>{});
+      }
+    }catch(e){}
+  }
 
   function idbOpen(){
     if(dbPromise)return dbPromise;
@@ -353,13 +418,30 @@ window.AC = window.AC || {};
       Promise.all(stale.map(id=>idbDelete(STORE_FILES,id)))
     ]);
   }
+  /* writeIDB() NO silencia errores: la cola sigue avanzando, pero quien espera
+     esta promesa recibe el rechazo real de la transacción. */
   function writeIDB(data){
     const attempt=writeChain.then(()=>Promise.all([
       idbPut(STORE_STATE,STATE_KEY,{schemaVersion:SCHEMA_VERSION,app:'autocare',data:data,localStorage:localMirror(),updatedAt:new Date().toISOString()}),
       syncPhotoFiles(data)
     ]));
     writeChain=attempt.catch(()=>{});
-    return attempt.then(()=>{clearStorageError()},e=>{idbFailed=true;emitStorageError(e,'IndexedDB')});
+    return attempt;
+  }
+  /* Traduce el resultado de writeIDB a estado de salud: éxito confirmado sólo
+     tras oncomplete; error notificado con el motivo real. */
+  function persistIDB(data,origin){
+    return writeIDB(data).then(()=>{
+      idbFailed=false;
+      clearStorageError();
+      if(migrationPending){pruneLocalState();migrationPending=false;}
+      emitStorageSaved();
+      return true;
+    },e=>{
+      idbFailed=true;
+      emitStorageError(e,origin||'IndexedDB');
+      return false;
+    });
   }
   function hydrate(data){
     if(!data||typeof data!=='object')return false;
@@ -373,13 +455,16 @@ window.AC = window.AC || {};
   }
   function initIDB(){
     if(initPromise)return initPromise;
+    requestPersistentStorage();
     initPromise=idbOpen().then(()=>idbGet(STORE_STATE,STATE_KEY))
-      .then(rec=>{
+      .then(async rec=>{
         if(!rec){
-          /* Migración única: lo que hubiera en localStorage pasa a IndexedDB
-             y después se libera la clave pesada. */
-          writeIDB(JSON.parse(JSON.stringify(state)));
-          pruneLocalState();
+          /* Migración única: se espera a que IndexedDB confirme la escritura
+             antes de borrar la copia de localStorage. Si falla, los datos
+             originales se conservan y se notifica el error. */
+          migrationPending=true;
+          const ok=await persistIDB(JSON.parse(JSON.stringify(state)),'IndexedDB (migration)');
+          if(!ok)return;
           return;
         }
         const remote=(rec.schemaVersion&&rec.data)?rec.data:rec;
@@ -426,8 +511,10 @@ window.AC = window.AC || {};
   let state=load();
   let dbRef=null,saving=false,again=false,timer=null,retry=null,syncKind='local';
 
-  function save(){
-    const full=JSON.parse(JSON.stringify(state));
+  /* Fase 1: estado en memoria (sincronía). Fase 2: confirmación en disco.
+     Mantenerlas separadas evita anunciar éxito antes de que IndexedDB
+     termine la transacción. */
+  function updateMemoryState(full){
     lastIDBData=full;
     try{
       /* El marcador "vacío" es una bandera ligera; el estado completo nunca
@@ -438,9 +525,12 @@ window.AC = window.AC || {};
         localStorage.removeItem(KEY+'-empty');
       }
     }catch(e){/* Bandera ligera: no es un fallo de persistencia. */}
-    /* El estado completo (incluidas fotos y recortes) va directo a IndexedDB. */
-    writeIDB(full);
-    return !lastStorageError&&!idbFailed;
+    return full;
+  }
+  function save(){
+    const full=updateMemoryState(JSON.parse(JSON.stringify(state)));
+    /* La promesa resuelve a true sólo cuando IndexedDB confirma el guardado. */
+    return persistIDB(full,'IndexedDB');
   }
 
   /* ---------- Reinicio absoluto ---------- */
@@ -624,18 +714,56 @@ window.AC = window.AC || {};
       name+='.json';
     }
     else{
-      const q=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';
-      const rows=[[tr('csv.vehicle'),tr('csv.date'),tr('csv.type'),tr('csv.category'),tr('csv.description'),tr('csv.odo'),tr('csv.volume'),tr('csv.cost'),tr('csv.full')]];
-      (state.vehicles||[]).forEach(r=>(r.entries||[]).slice().sort((a,b)=>a.date<b.date?-1:1).forEach(e=>{
+      const trv=(s,v)=>{try{return AC.i18n.t(s,v)}catch(e){return s}};
+      /* CSV Injection: cualquier celda que empiece por = + - @ TAB o CR se
+         fuerza a texto con un apóstrofe delante. */
+      const q=v=>{
+        let s=String(v==null?'':v);
+        if(/^[=+\-@\t\r]/.test(s))s="'"+s;
+        return '"'+s.replace(/"/g,'""')+'"';
+      };
+      const cfg=state.settings||{},du=(DIST[cfg.dist]||DIST.km).u,vu=(VOL[cfg.vol]||VOL.L).u+(cfg.vol==='galUK'?' UK':''),cur=cfg.cur||'';
+      const rows=[[tr('csv.vehicle'),tr('csv.date'),tr('csv.type'),tr('csv.category'),tr('csv.description'),
+        trv('csv.odoU',{u:du}),trv('csv.volumeU',{u:vu}),trv('csv.costU',{c:cur}),tr('csv.full')]];
+      /* Mismo orden fecha + odómetro que el cálculo de consumos. */
+      const byDateOdo=(a,b)=>a.date<b.date?-1:a.date>b.date?1:(a.odo||0)-(b.odo||0);
+      (state.vehicles||[]).forEach(r=>(r.entries||[]).slice().sort(byDateOdo).forEach(e=>{
         rows.push([vehicleLabel(r.vehicle),e.date,e.type,catOf(e),e.desc||'',e.odo!=null?+e.odo.toFixed(1):'',e.vol!=null?+e.vol.toFixed(2):'',e.cost||0,e.type==='fuel'?(e.full!==false?tr('csv.yes'):tr('csv.no')):'']);
       }));
       data=rows.map(r=>r.map(q).join(',')).join('\n');name+='.csv';
     }
     try{await dl.save({filename:name,data});notify(tr('exportReady'))}catch(e){if(!e||e.code!=='declined')notify(tr('exportFail'))}
   }
-  /* Valida origen y estructura antes de sobrescribir el garaje actual. */
-  const dateOrNull=x=>x==null||(typeof x==='string'&&DATE_RE.test(x));
+  /* Valida origen, fechas reales y estructura antes de sobrescribir el garaje. */
+  const dateOrNull=x=>x==null||isRealDate(x);
   const numOrNull=x=>x==null||(typeof x==='number'&&Number.isFinite(x)&&x>=0);
+  const posOrNull=x=>x==null||(typeof x==='number'&&Number.isFinite(x)&&x>0);
+  const costOrNull=x=>x==null||(typeof x==='number'&&Number.isFinite(x)&&x>=0);
+  function validEntryShape(e){
+    if(!e||typeof e!=='object'||Array.isArray(e))return false;
+    if(typeof e.id!=='string'||!e.id||['fuel','exp','odo'].indexOf(e.type)<0)return false;
+    if(!isRealDate(e.date))return false;
+    if(e.cat!=null&&!CATS[e.cat])return false;
+    if(e.desc!=null&&typeof e.desc!=='string')return false;
+    if(!costOrNull(e.cost))return false;
+    if(e.type==='fuel')return numOrNull(e.odo)&&e.odo!=null&&typeof e.vol==='number'&&Number.isFinite(e.vol)&&e.vol>0;
+    if(e.type==='odo')return numOrNull(e.odo)&&e.odo!=null;
+    return numOrNull(e.odo); /* gastos: odómetro opcional, nunca negativo */
+  }
+  function validRemShape(r){
+    if(!r||typeof r!=='object'||Array.isArray(r))return false;
+    if(typeof r.name!=='string'||!r.name.trim())return false;
+    if(!dateOrNull(r.lastDate)||!numOrNull(r.lastOdo))return false;
+    return posOrNull(r.intervalKm)&&posOrNull(r.intervalMonths);
+  }
+  function validDocShape(d){
+    if(!d||typeof d!=='object'||Array.isArray(d))return false;
+    return typeof d.name==='string'&&dateOrNull(d.due)&&(d.note==null||typeof d.note==='string');
+  }
+  function validCompShape(c){
+    if(!c||typeof c!=='object'||Array.isArray(c)||COMP_KEYS.indexOf(c.key)<0)return false;
+    return dateOrNull(c.date)&&numOrNull(c.odo)&&posOrNull(c.intervalKm)&&posOrNull(c.intervalMonths);
+  }
   function validTireShape(t){
     if(t==null)return true; /* backups anteriores a la Etapa 2 */
     if(!t||typeof t!=='object'||Array.isArray(t))return false;
@@ -645,7 +773,14 @@ window.AC = window.AC || {};
   function validValueShape(v){
     if(v==null)return true;
     if(!v||typeof v!=='object'||Array.isArray(v))return false;
-    return numOrNull(v.purchase)&&numOrNull(v.current);
+    return posOrNull(v.purchase)&&numOrNull(v.current);
+  }
+  const validList=(list,fn)=>!Array.isArray(list)||list.every(fn);
+  function validRecordShape(r){
+    if(!r||typeof r!=='object'||Array.isArray(r))return false;
+    return validList(r.entries,validEntryShape)&&validList(r.reminders,validRemShape)
+      &&validList(r.docs,validDocShape)&&validList(r.components,validCompShape)
+      &&validTireShape(r.tire)&&validValueShape(r.value);
   }
   function validateBackup(j){
     if(!j||typeof j!=='object'||Array.isArray(j))return {ok:false,msgText:'El archivo no contiene un respaldo válido.'};
@@ -654,16 +789,14 @@ window.AC = window.AC || {};
     const sv=j.schemaVersion==null?1:Number(j.schemaVersion);
     if(!isFinite(sv)||sv<1||sv>SCHEMA_VERSION)return {ok:false,msgText:'La versión de esquema del respaldo no es compatible.'};
     if(!Array.isArray(j.entries)&&!Array.isArray(j.vehicles))return {ok:false,msgText:'El respaldo está incompleto: no contiene vehículos ni registros válidos.'};
-    if(j.vehicles!==undefined&&!Array.isArray(j.vehicles))return {ok:false,msgText:'El respaldo está dañado: el garaje no es válido.'};
-    /* Etapa 2: neumáticos y valor viajan en el JSON y se validan antes de importar. */
-    const bad='El respaldo tiene datos de neumáticos o valor dañados.';
+    if((j.entries!==undefined&&!Array.isArray(j.entries))||(j.vehicles!==undefined&&!Array.isArray(j.vehicles)))
+      return {ok:false,msgText:'El respaldo está dañado: el garaje no es válido.'};
+    const bad='El respaldo tiene fechas, volúmenes, costes u odómetros no válidos.';
+    /* Formato v1 (un solo vehículo en la raíz) y formato multi-vehículo. */
+    if(Array.isArray(j.entries)&&!validList(j.entries,validEntryShape))return {ok:false,msgText:bad};
+    if(!validList(j.reminders,validRemShape)||!validList(j.docs,validDocShape)||!validList(j.components,validCompShape))return {ok:false,msgText:bad};
     if(!validTireShape(j.tire)||!validValueShape(j.value))return {ok:false,msgText:bad};
-    if(Array.isArray(j.vehicles)){
-      for(let i=0;i<j.vehicles.length;i++){
-        const r=j.vehicles[i];if(!r||typeof r!=='object')continue;
-        if(!validTireShape(r.tire)||!validValueShape(r.value))return {ok:false,msgText:bad};
-      }
-    }
+    if(Array.isArray(j.vehicles)&&!validList(j.vehicles,validRecordShape))return {ok:false,msgText:bad};
     return {ok:true,version:sv};
   }
   function restoreMemoryBackup(){
@@ -708,6 +841,10 @@ window.AC = window.AC || {};
     get onStorageError(){return storageErrorHandler},
     set onStorageError(fn){storageErrorHandler=typeof fn==='function'?fn:null},
     lastStorageError:()=>lastStorageError,
+    /* Éxito confirmado por IndexedDB: callback y evento `onStorageSaved`. */
+    get onStorageSaved(){return storageSavedHandler},
+    set onStorageSaved(fn){storageSavedHandler=typeof fn==='function'?fn:null},
+    lastStorageSaved:()=>lastStorageSaved,
     isStorageHealthy:()=>!lastStorageError&&!idbFailed,
     putFile,getFile,listFiles,deleteFile,
     garage:{list:garageList,select:selectVehicle,add:addVehicle,remove:removeVehicle,
