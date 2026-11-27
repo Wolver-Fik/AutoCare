@@ -16,6 +16,12 @@ window.AC = window.AC || {};
   const COMP_KEYS=['tires','battery','brakes'];
   const DOC_KEYS=['insurance','tax','inspection'];
   const COMP_LIMITS={tires:{km:40000,months:60},battery:{km:40000,months:48},brakes:{km:30000,months:36}};
+  /* Etapa 2: cada vehículo lleva su propio control de neumáticos y su valor.
+     Las distancias se guardan siempre en km (unidad canónica) y los importes
+     en la moneda configurada en Ajustes. */
+  const TIRE_ROT_KM=10000;
+  const TIRE_DEFAULT={brandSize:'',installDate:null,installOdo:null,lifeKm:null,rotDate:null,rotOdo:null};
+  const VALUE_DEFAULT={purchase:null,current:null};
   let seq=0;
   const rid=p=>p+Date.now().toString(36)+(++seq).toString(36)+Math.random().toString(36).slice(2,5);
   const DATE_RE=/^\d{4}-\d{2}-\d{2}$/;
@@ -62,12 +68,12 @@ window.AC = window.AC || {};
     photoDataUrl:null,photoOriginal:null,photoFallback:null,photoCutDataUrl:null,photoCutModel:null,
     photoCut:false,photoCutWanted:true,photoView:'fallback',usePhoto:false,empty:true};
 
-  function defaults(){return{v:1,updatedAt:0,settings:{name:tr('myCar'),dist:'km',vol:'L',eff:'dist',cur:'UYU',warnKm:1000,warnDays:30},vehicle:Object.assign({},VEHICLE_DEFAULT),entries:[],reminders:[],docs:[],components:[]}}
+  function defaults(){return{v:1,updatedAt:0,settings:{name:tr('myCar'),dist:'km',vol:'L',eff:'dist',cur:'UYU',warnKm:1000,warnDays:30},vehicle:Object.assign({},VEHICLE_DEFAULT),entries:[],reminders:[],docs:[],components:[],tire:Object.assign({},TIRE_DEFAULT),value:Object.assign({},VALUE_DEFAULT)}}
   /* Un registro del garaje encapsula TODA la información de un vehículo. El estado
      expone accessors (vehicle, entries, reminders, docs, components) que apuntan al
      registro activo: así el resto de la app sigue trabajando con `state.entries` y
      cada cambio queda aislado dentro de su vehículo. */
-  function emptyRecord(){return{id:rid('v'),vehicle:Object.assign({},EMPTY_VEHICLE),entries:[],reminders:[],docs:[],components:[]}}
+  function emptyRecord(){return{id:rid('v'),vehicle:Object.assign({},EMPTY_VEHICLE),entries:[],reminders:[],docs:[],components:[],tire:Object.assign({},TIRE_DEFAULT),value:Object.assign({},VALUE_DEFAULT)}}
   function activeOf(s){
     if(!s||!Array.isArray(s.vehicles)||!s.vehicles.length)s.vehicles=[emptyRecord()];
     let r=null;
@@ -75,10 +81,12 @@ window.AC = window.AC || {};
     if(!r){r=s.vehicles[0];s.activeId=r.id}
     if(!r.vehicle||typeof r.vehicle!=='object')r.vehicle=Object.assign({},EMPTY_VEHICLE);
     ['entries','reminders','docs','components'].forEach(k=>{if(!Array.isArray(r[k]))r[k]=[]});
+    if(!r.tire||typeof r.tire!=='object'||Array.isArray(r.tire))r.tire=Object.assign({},TIRE_DEFAULT);
+    if(!r.value||typeof r.value!=='object'||Array.isArray(r.value))r.value=Object.assign({},VALUE_DEFAULT);
     return r;
   }
   function attach(s){
-    ['vehicle','entries','reminders','docs','components'].forEach(k=>{
+    ['vehicle','entries','reminders','docs','components','tire','value'].forEach(k=>{
       Object.defineProperty(s,k,{enumerable:true,configurable:true,
         get(){return activeOf(s)[k]},
         set(v){activeOf(s)[k]=v}});
@@ -118,7 +126,11 @@ window.AC = window.AC || {};
       {id:id('c'),name:tr('doc.insurance'),due:addDays(today,18),note:'',key:'insurance',demo:true},
       {id:id('c'),name:tr('doc.tax'),due:addDays(today,96),note:'',key:'tax',demo:true},
       {id:id('c'),name:tr('doc.inspection'),due:addDays(today,263),note:'',key:'inspection',demo:true}];
-    const rec={id:rid('v'),vehicle:st.vehicle,entries:st.entries,reminders:st.reminders,docs:st.docs,components:[]};
+    /* Neumáticos y valor coherentes con el Onix RS 2024 del demo: montados a
+       38.900 km, 50.000 km de vida útil y rotados a los 47.500 km. */
+    st.tire={brandSize:'Continental 195/55 R16',installDate:addDays(today,-140),installOdo:38900,lifeKm:50000,rotDate:addDays(today,-30),rotOdo:47500,demo:true};
+    st.value={purchase:1250000,current:1040000,demo:true};
+    const rec={id:rid('v'),vehicle:st.vehicle,entries:st.entries,reminders:st.reminders,docs:st.docs,components:[],tire:st.tire,value:st.value};
     return assemble(st.settings,[rec],rec.id,Date.now());
   }
 
@@ -183,6 +195,30 @@ window.AC = window.AC || {};
       intervalMonths:Number.isFinite(mo)&&mo>0?Math.round(mo):null};
     return (c.date||c.odo!=null)?c:null;
   }
+  function normalizeTire(raw){
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))return Object.assign({},TIRE_DEFAULT);
+    const io=Number(raw.installOdo),lk=Number(raw.lifeKm),ro=Number(raw.rotOdo);
+    const t={
+      brandSize:typeof raw.brandSize==='string'?raw.brandSize.trim().slice(0,60):'',
+      installDate:typeof raw.installDate==='string'&&DATE_RE.test(raw.installDate)?raw.installDate:null,
+      installOdo:Number.isFinite(io)&&io>=0?io:null,
+      lifeKm:Number.isFinite(lk)&&lk>0?lk:null,
+      rotDate:typeof raw.rotDate==='string'&&DATE_RE.test(raw.rotDate)?raw.rotDate:null,
+      rotOdo:Number.isFinite(ro)&&ro>=0?ro:null
+    };
+    if(raw.demo)t.demo=true;
+    return t;
+  }
+  function normalizeValue(raw){
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))return Object.assign({},VALUE_DEFAULT);
+    const p=Number(raw.purchase),c=Number(raw.current);
+    const v={
+      purchase:Number.isFinite(p)&&p>0?p:null,
+      current:Number.isFinite(c)&&c>=0?c:null
+    };
+    if(raw.demo)v.demo=true;
+    return v;
+  }
   function normalizeRecord(raw){
     const r=raw&&typeof raw==='object'?raw:{};
     return{
@@ -191,7 +227,9 @@ window.AC = window.AC || {};
       entries:(Array.isArray(r.entries)?r.entries:[]).filter(e=>e&&e.id&&e.date&&e.type),
       reminders:Array.isArray(r.reminders)?r.reminders:[],
       docs:(Array.isArray(r.docs)?r.docs:[]).map(normalizeDoc).filter(Boolean),
-      components:(Array.isArray(r.components)?r.components:[]).map(normalizeComponent).filter(Boolean)
+      components:(Array.isArray(r.components)?r.components:[]).map(normalizeComponent).filter(Boolean),
+      tire:normalizeTire(r.tire),
+      value:normalizeValue(r.value)
     };
   }
   function normalize(d){
@@ -203,7 +241,7 @@ window.AC = window.AC || {};
     }
     /* Compatibilidad: los backups v1 guardaban un solo vehículo en la raíz. */
     const rawRecords=Array.isArray(d.vehicles)&&d.vehicles.length?d.vehicles:[{
-      vehicle:d.vehicle,entries:d.entries,reminders:d.reminders,docs:d.docs,components:d.components
+      vehicle:d.vehicle,entries:d.entries,reminders:d.reminders,docs:d.docs,components:d.components,tire:d.tire,value:d.value
     }];
     const records=rawRecords.map(normalizeRecord);
     if(!records.length)records.push(emptyRecord());
@@ -222,7 +260,7 @@ window.AC = window.AC || {};
      siendo el espejo sincrono que ya consume app.js. */
   const DB_NAME='autocare_db';
   const DB_VERSION=1;
-  const SCHEMA_VERSION=2;
+  const SCHEMA_VERSION=3;
   const STORE_STATE='state',STORE_FILES='files',STATE_KEY='main';
   const PHOTO_FIELDS_DB=['photoDataUrl','photoOriginal','photoFallback','photoCutDataUrl'];
   let dbPromise=null,idbReady=false,idbFailed=false,initPromise=null;
@@ -511,7 +549,8 @@ window.AC = window.AC || {};
   function hasDemo(){
     let found=false;
     eachRecord(r=>{
-      if((r.entries||[]).some(e=>e.demo)||(r.reminders||[]).some(x=>x.demo)||(r.docs||[]).some(x=>x.demo))found=true;
+      if((r.entries||[]).some(e=>e.demo)||(r.reminders||[]).some(x=>x.demo)||(r.docs||[]).some(x=>x.demo)
+         ||(r.tire&&r.tire.demo)||(r.value&&r.value.demo))found=true;
     });
     return found;
   }
@@ -520,6 +559,8 @@ window.AC = window.AC || {};
       r.entries=(r.entries||[]).filter(e=>!e.demo);
       r.reminders=(r.reminders||[]).map(x=>x.demo?{id:x.id,name:x.name,cat:x.cat,intervalKm:x.intervalKm,intervalMonths:x.intervalMonths,lastOdo:null,lastDate:null}:x);
       r.docs=(r.docs||[]).map(d=>d.demo?{id:d.id,name:d.name,due:null,note:'',key:d.key}:d);
+      if(r.tire&&r.tire.demo)r.tire=Object.assign({},TIRE_DEFAULT);
+      if(r.value&&r.value.demo)r.value=Object.assign({},VALUE_DEFAULT);
     });
   }
   function demoCleared(){if(hasDemo())clearDemo()}
@@ -541,9 +582,10 @@ window.AC = window.AC || {};
        ocupa esa tarjeta en vez de dejar un registro fantasma. */
     if(list.length===1&&active.vehicle.empty===true){
       active.vehicle=v;active.entries=[];active.reminders=[];active.docs=docs;active.components=[];
+      active.tire=Object.assign({},TIRE_DEFAULT);active.value=Object.assign({},VALUE_DEFAULT);
       state.activeId=active.id;
     }else{
-      list.push({id:rid('v'),vehicle:v,entries:[],reminders:[],docs,components:[]});
+      list.push({id:rid('v'),vehicle:v,entries:[],reminders:[],docs,components:[],tire:Object.assign({},TIRE_DEFAULT),value:Object.assign({},VALUE_DEFAULT)});
       state.activeId=list[list.length-1].id;
     }
     state.settings.name=vehicleLabel(v);save();
@@ -555,6 +597,7 @@ window.AC = window.AC || {};
     if(list.length<=1){
       const r=list[0]||emptyRecord();
       r.vehicle=Object.assign({},EMPTY_VEHICLE);r.entries=[];r.reminders=[];r.docs=[];r.components=[];
+      r.tire=Object.assign({},TIRE_DEFAULT);r.value=Object.assign({},VALUE_DEFAULT);
       if(!list.length)list.push(r);
       state.activeId=r.id;state.settings.name='';save();return true;
     }
@@ -583,6 +626,19 @@ window.AC = window.AC || {};
     try{await dl.save({filename:name,data});notify(tr('exportReady'))}catch(e){if(!e||e.code!=='declined')notify(tr('exportFail'))}
   }
   /* Valida origen y estructura antes de sobrescribir el garaje actual. */
+  const dateOrNull=x=>x==null||(typeof x==='string'&&DATE_RE.test(x));
+  const numOrNull=x=>x==null||(typeof x==='number'&&Number.isFinite(x)&&x>=0);
+  function validTireShape(t){
+    if(t==null)return true; /* backups anteriores a la Etapa 2 */
+    if(!t||typeof t!=='object'||Array.isArray(t))return false;
+    if(t.brandSize!=null&&typeof t.brandSize!=='string')return false;
+    return dateOrNull(t.installDate)&&dateOrNull(t.rotDate)&&numOrNull(t.installOdo)&&numOrNull(t.rotOdo)&&numOrNull(t.lifeKm);
+  }
+  function validValueShape(v){
+    if(v==null)return true;
+    if(!v||typeof v!=='object'||Array.isArray(v))return false;
+    return numOrNull(v.purchase)&&numOrNull(v.current);
+  }
   function validateBackup(j){
     if(!j||typeof j!=='object'||Array.isArray(j))return {ok:false,msgText:'El archivo no contiene un respaldo válido.'};
     if(j.app&&String(j.app).toLowerCase()!=='autocare')return {ok:false,msgText:'Este respaldo pertenece a otra aplicación y no se importará.'};
@@ -590,6 +646,15 @@ window.AC = window.AC || {};
     if(!isFinite(sv)||sv<1||sv>SCHEMA_VERSION)return {ok:false,msgText:'La versión de esquema del respaldo no es compatible.'};
     if(!Array.isArray(j.entries)&&!Array.isArray(j.vehicles))return {ok:false,msgText:'El respaldo está incompleto: no contiene vehículos ni registros válidos.'};
     if(j.vehicles!==undefined&&!Array.isArray(j.vehicles))return {ok:false,msgText:'El respaldo está dañado: el garaje no es válido.'};
+    /* Etapa 2: neumáticos y valor viajan en el JSON y se validan antes de importar. */
+    const bad='El respaldo tiene datos de neumáticos o valor dañados.';
+    if(!validTireShape(j.tire)||!validValueShape(j.value))return {ok:false,msgText:bad};
+    if(Array.isArray(j.vehicles)){
+      for(let i=0;i<j.vehicles.length;i++){
+        const r=j.vehicles[i];if(!r||typeof r!=='object')continue;
+        if(!validTireShape(r.tire)||!validValueShape(r.value))return {ok:false,msgText:bad};
+      }
+    }
     return {ok:true,version:sv};
   }
   function restoreMemoryBackup(){
@@ -619,7 +684,7 @@ window.AC = window.AC || {};
   }
 
   /* API pública consumida por app.js */
-  AC.core={DIST,VOL,CATS,GROUPS,COMP_KEYS,DOC_KEYS,COMP_LIMITS,BRANDS,BODIES,COLORS,VEHICLE_DEFAULT,EMPTY_VEHICLE,DEMO_PHOTO,iso,todayISO,parseISO,addDays,addMonths,daysBetween,catOf,hasOdo,docKeyOf,vehicleLabel,defaults,blank,demo,normalize};
+  AC.core={DIST,VOL,CATS,GROUPS,COMP_KEYS,DOC_KEYS,COMP_LIMITS,TIRE_ROT_KM,TIRE_DEFAULT,VALUE_DEFAULT,BRANDS,BODIES,COLORS,VEHICLE_DEFAULT,EMPTY_VEHICLE,DEMO_PHOTO,iso,todayISO,parseISO,addDays,addMonths,daysBetween,catOf,hasOdo,docKeyOf,vehicleLabel,defaults,blank,demo,normalize};
   AC.storage={
     KEY,cap,load,normalize,commit,connect,setSync,wipe,snapshot,
     get state(){return state},

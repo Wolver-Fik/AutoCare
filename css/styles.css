@@ -108,13 +108,13 @@ button{font:inherit;color:inherit;cursor:pointer;touch-action:manipulation}
 @media(min-width:900px){
   .view{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
   #view-tablero{grid-template-areas:"vehicle vehicle" "hero stats" "actions actions" "alerts alerts"}
-  #view-mantenimiento{grid-template-areas:"rem docs" "quick quick"}
-  #view-analisis{grid-template-areas:"eff spend" "cats hist" "cost compare"}
+  #view-mantenimiento{grid-template-areas:"rem docs" "tires quick"}
+  #view-analisis{grid-template-areas:"eff spend" "cats hist" "cost value" "compare compare"}
 }
 .a-vehicle{grid-area:vehicle}.a-hero{grid-area:hero}.a-stats{grid-area:stats}.a-actions{grid-area:actions}.a-alerts{grid-area:alerts}
-.a-rem{grid-area:rem}.a-docs{grid-area:docs}.a-quick{grid-area:quick}
+.a-rem{grid-area:rem}.a-docs{grid-area:docs}.a-tires{grid-area:tires}.a-quick{grid-area:quick}
 .a-eff{grid-area:eff}.a-spend{grid-area:spend}.a-cats{grid-area:cats}.a-hist{grid-area:hist}
-.a-cost{grid-area:cost}.a-compare{grid-area:compare}
+.a-cost{grid-area:cost}.a-value{grid-area:value}.a-compare{grid-area:compare}
 
 .card{background:var(--s1);border:1px solid var(--line);border-radius:16px;padding:16px}
 .card-h{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
@@ -279,6 +279,33 @@ details.tbl summary{cursor:pointer;padding:4px 0}
 .chip input:checked+span{background:var(--accent-soft);border-color:var(--accent);color:#fff}
 .chip input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
 .hist-f{margin-bottom:10px}
+
+/* ---------- Etapa 2: control de neumáticos y valor/depreciación ----------
+   Textos cortos e indicadores sin partición de palabras: iOS/Android no
+   deben partir "neumáticos", "depreciación" ni cifras con guion. */
+.tire-card,.value-card{min-width:0;hyphens:none}
+.tire-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;hyphens:none}
+.tire-head{display:flex;align-items:center;justify-content:space-between;gap:8px 10px;flex-wrap:wrap}
+.tire-head b,.tire-pct,.value-big,.value-line b,.tire-meta span,.tire-hint,.value-hint{white-space:nowrap;hyphens:none}
+.tire-pct{font:600 20px/1 var(--f-cond);font-variant-numeric:tabular-nums;color:var(--fg)}
+.tire-meter{margin:10px 0}
+.tire-meter .bar i{background:var(--accent)}
+.tire-meter.st-soon .bar i{background:var(--warn)}
+.tire-meter.st-over .bar i{background:var(--bad)}
+.tire-meta{display:grid;gap:5px;font-size:13px;color:var(--fg2)}
+.tire-meta span{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.tire-hint,.value-hint{font-size:12px;color:var(--fg3);margin-top:10px;overflow-wrap:anywhere}
+.value-big{font:600 clamp(32px,7vw,46px)/1 var(--f-cond);font-variant-numeric:tabular-nums;margin:4px 0 12px}
+.value-line{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;padding:7px 10px;border-radius:9px;background:var(--s2);font-size:13px;color:var(--fg2)}
+.value-line>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;hyphens:none}
+.value-line b{color:var(--fg);font-variant-numeric:tabular-nums}
+.value-line.ok b{color:var(--ok)}
+.value-line.over b{color:var(--bad)}
+@media(max-width:639px){
+  .tire-head{gap:6px}
+  .tire-meta span{white-space:nowrap}
+  .tire-hint,.value-hint{white-space:normal;hyphens:none}
+}
 
 /* ---------- Ficha rápida de componentes y documentos ---------- */
 .quick-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}

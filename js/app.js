@@ -70,6 +70,28 @@
     return{cost,dist,value:dist>0?cost/dist:null};
   }
 
+  /* ---------- Etapa 2: neumáticos y valor del vehículo (sin DOM) ---------- */
+  const TIRE_ROT_KM=AC.core.TIRE_ROT_KM||10000;
+  function tireStatus(t,odo,S){
+    if(!t||t.installOdo==null||!(t.lifeKm>0)||odo==null)return{state:'unset'};
+    const used=Math.max(0,odo-t.installOdo),left=t.lifeKm-used;
+    const pct=Math.max(0,Math.min(1,used/t.lifeKm));
+    const state=left<=0?'over':(left<=S.warnKm||pct>=0.85)?'soon':'ok';
+    let rot=null;
+    if(t.rotOdo!=null){const since=Math.max(0,odo-t.rotOdo);rot={since,due:since>=TIRE_ROT_KM}}
+    return{state,left,used,pct,rot};
+  }
+  function valueInfo(v,E){
+    const p=Number(v&&v.purchase),c=Number(v&&v.current);
+    const purchase=Number.isFinite(p)&&p>0?p:null,current=Number.isFinite(c)&&c>=0?c:null;
+    if(purchase==null&&current==null)return null;
+    const diff=(purchase!=null&&current!=null)?current-purchase:null;
+    const pct=(diff!=null&&purchase>0)?diff/purchase*100:null;
+    const spend=E.reduce((a,e)=>a+((e.type==='fuel'||(e.type==='exp'&&['service','tires','repair'].indexOf(e.cat)>=0))?(e.cost||0):0),0);
+    const spendPct=purchase>0?spend/purchase*100:null;
+    return{purchase,current,diff,pct,spend,spendPct,net:diff==null?null:diff-spend};
+  }
+
   function summarize(st,today){
     const E=st.entries,odo=currentOdo(E),segs=fuelSegments(E);
     let dist=0,vol=0,best=null;segs.forEach(s=>{dist+=s.dist;vol+=s.vol;best=best==null?s.kmL:Math.max(best,s.kmL)});
@@ -103,7 +125,7 @@
   }
 
   /* Fachada única: mismas funciones que había en el index original */
-  const TL=Object.assign({},AC.core,{currentOdo,fuelSegments,costPerDistance,effDisp,effLabel,dailyRate,remStatus,docStatus,summarize,monthlySpend,catTotals,niceTicks});
+  const TL=Object.assign({},AC.core,{TIRE_ROT_KM,currentOdo,fuelSegments,costPerDistance,effDisp,effLabel,dailyRate,remStatus,docStatus,tireStatus,valueInfo,summarize,monthlySpend,catTotals,niceTicks});
 
   /* ---------- Utilidades de interfaz ---------- */
   const $=s=>document.querySelector(s);
@@ -967,8 +989,8 @@
     $('#vName').textContent=isConfigured()?(AC.core.vehicleLabel(veh())||S().name||T('myCar')):T('noVehicle');
     $('#demo').hidden=!hasDemo();
     const sm=TL.summarize(state,today());
-    renderVehicle();renderHero(sm);renderStats(sm);renderAlerts(sm);renderRems(sm);renderDocs();renderQuick(sm);
-    renderEff();renderSpend();renderCats();renderHist();renderCost(sm);renderCompare();
+    renderVehicle();renderHero(sm);renderStats(sm);renderAlerts(sm);renderRems(sm);renderDocs();renderTires(sm);renderQuick(sm);
+    renderEff();renderSpend();renderCats();renderHist();renderCost(sm);renderValue();renderCompare();
     $('#foot').textContent=T('footer');
     processDemoPhoto();
   }
@@ -1105,6 +1127,62 @@
        usuario y doblaba los botones en pantallas pequeñas. */
     $('#quick').innerHTML='<div class="card-h"><h2>'+T('quickTitle')+'</h2><span class="lbl">'+esc(AC.core.vehicleLabel(veh()))+'</span></div>'
       +'<div class="quick-grid"><section><h3>'+T('components')+'</h3><ul class="list quick-list">'+comps+'</ul></section></div>';
+  }
+
+  /* ---------- Etapa 2 · Control de neumáticos ----------
+     El desgaste se calcula siempre con el odómetro más alto del vehículo activo
+     y se muestra como barra + porcentaje + kilómetros restantes. */
+  function renderTires(sm){
+    const t=state.tire||{},s=TL.tireStatus(t,sm.odo,S());
+    let h='<div class="card-h"><h2>'+T('tireTitle')+'</h2><button type="button" class="btn sm" data-act="tire-edit">'
+      +'<svg width="20" height="20" class="ico" style="width:16px;height:16px"><use href="#i-tire"/></svg>'+T(s.state==='unset'?'tireAdd':'tireEdit')+'</button></div>';
+    if(s.state==='unset'){
+      $('#tires').innerHTML=h+'<p class="empty">'+T('tireEmpty')+'</p>'
+        +'<p class="tire-hint">'+T('tireHint',{n:nf(dOut(TL.TIRE_ROT_KM)),u:dU()})+'</p>';
+      return;
+    }
+    const pill=s.state==='over'?T('overdue'):s.state==='soon'?T('soon'):T('upToDate');
+    const meta=[];
+    if(t.installDate)meta.push(T('installedOn',{d:fdate(t.installDate,true)}));
+    if(t.installOdo!=null)meta.push(T('installedAt',{v:nf(dOut(t.installOdo)),u:dU()}));
+    if(t.lifeKm!=null)meta.push(T('tireLifeValue',{v:nf(dOut(t.lifeKm)),u:dU()}));
+    meta.push(s.left>0?T('tireRemaining',{v:nf(dOut(s.left)),u:dU()}):T('tirePast',{v:nf(dOut(-s.left)),u:dU()}));
+    let rotLine='';
+    if(t.rotDate||t.rotOdo!=null){
+      const bits=[];
+      if(t.rotDate)bits.push(fdate(t.rotDate,true));
+      if(t.rotOdo!=null)bits.push(nf(dOut(t.rotOdo))+' '+dU());
+      rotLine=T('tireRotatedAt',{x:bits.join(' · ')});
+    }
+    if(s.rot&&s.rot.due){if(rotLine)rotLine+=' · ';rotLine+=T('tireRotateDue',{v:nf(dOut(s.rot.since)),u:dU()})}
+    const pct=Math.round(s.pct*100);
+    $('#tires').innerHTML=h+'<div class="tire-card">'
+      +'<div class="tire-head"><span class="tire-name">'+(t.brandSize?esc(t.brandSize):esc(T('comp.tires')))+'</span>'
+      +'<span class="pill '+s.state+'">'+pill+'</span><b class="tire-pct">'+nf(pct,0)+'%</b></div>'
+      +'<div class="tire-meter st-'+s.state+'"><div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+pct+'" aria-label="'+esc(T('tireWear'))+'"><i style="width:'+pct+'%"></i></div></div>'
+      +'<div class="tire-meta">'+meta.map(x=>'<span>'+esc(x)+'</span>').join('')+(rotLine?'<span>'+esc(rotLine)+'</span>':'')+'</div>'
+      +'<p class="tire-hint">'+T('tireHint',{n:nf(dOut(TL.TIRE_ROT_KM)),u:dU()})+'</p></div>';
+  }
+
+  /* ---------- Etapa 2 · Valor y depreciación ---------- */
+  function renderValue(){
+    const v=state.value||{},vi=TL.valueInfo(v,state.entries);
+    let h='<div class="card-h"><h2>'+T('valueTitle')+'</h2><button type="button" class="btn sm" data-act="value-edit">'
+      +'<svg width="20" height="20" class="ico" style="width:16px;height:16px"><use href="#i-gauge"/></svg>'+T(vi?'valueEdit':'valueAdd')+'</button></div>';
+    if(!vi){$('#value').innerHTML=h+'<p class="empty">'+T('valueEmpty')+'</p>';return}
+    const lines=[];
+    if(vi.current!=null)lines.push('<div class="value-line"><span>'+T('valueCurrent',{c:esc(S().cur)})+'</span><b>'+money(vi.current,0)+'</b></div>');
+    if(vi.purchase!=null)lines.push('<div class="value-line"><span>'+T('valuePurchase',{c:esc(S().cur)})+'</span><b>'+money(vi.purchase,0)+'</b></div>');
+    if(vi.diff!=null){
+      const up=vi.diff>=0;
+      lines.push('<div class="value-line '+(up?'ok':'over')+'"><span>'+T(up?'valueGain':'valueDrop')+'</span><b>'
+        +(up?'+':'')+money(vi.diff,0)+' ('+(vi.pct>=0?'+':'')+nf(vi.pct,1)+'%)</b></div>');
+    }
+    lines.push('<div class="value-line"><span>'+T('valueSpend')+'</span><b>'+money(vi.spend,0)+'</b></div>');
+    if(vi.spendPct!=null)lines.push('<div class="value-line"><span>'+T('valueRelation')+'</span><b>'+nf(vi.spendPct,1)+'%</b></div>');
+    if(vi.net!=null)lines.push('<div class="value-line"><span>'+T('valueNet')+'</span><b>'+money(vi.net,0)+'</b></div>');
+    $('#value').innerHTML=h+'<div class="value-card"><div class="value-big">'+(vi.current!=null?money(vi.current,0):'–')+'</div>'
+      +lines.join('')+'<p class="value-hint">'+T('valueHint')+'</p></div>';
   }
 
   /* ---------- Costo real por km / milla ---------- */
@@ -1409,6 +1487,51 @@
     });
   }
 
+  /* ---------- Etapa 2 · Formularios independientes por vehículo ---------- */
+  function openTire(){
+    sheetKind='tire';const t=state.tire||{},edit=!!(t.brandSize||t.installDate||t.installOdo!=null||t.lifeKm>0||t.rotDate||t.rotOdo!=null);
+    const km=x=>x!=null&&Number.isFinite(x)?+(dOut(x)).toFixed(0):'';
+    openSheet(head(T(edit?'tireEdit':'tireAdd'))+'<form id="frm" novalidate>'
+      +'<label class="fld"><span>'+T('tireBrandSize')+'</span><input id="t-brand" type="text" maxlength="60" value="'+esc(t.brandSize||'')+'" placeholder="'+esc(T('tireBrandPlaceholder'))+'"></label>'
+      +'<div class="row2"><label class="fld"><span>'+T('tireInstallDate')+'</span><input id="t-date" type="date" value="'+(t.installDate||'')+'"></label>'
+      +'<label class="fld"><span>'+T('tireInstallOdo',{u:dU()})+'</span><input id="t-odo" type="number" inputmode="decimal" step="any" min="0" value="'+km(t.installOdo)+'" placeholder="'+esc(T('optional'))+'"></label></div>'
+      +'<div class="row2"><label class="fld"><span>'+T('tireLife',{u:dU()})+'</span><input id="t-life" type="number" inputmode="decimal" step="any" min="0" value="'+km(t.lifeKm)+'" placeholder="'+nf(dOut(50000))+'"></label>'
+      +'<label class="fld"><span>'+T('tireRotOdo',{u:dU()})+'</span><input id="t-rodo" type="number" inputmode="decimal" step="any" min="0" value="'+km(t.rotOdo)+'" placeholder="'+esc(T('optional'))+'"></label></div>'
+      +'<label class="fld"><span>'+T('tireRotDate')+'</span><input id="t-rdate" type="date" value="'+(t.rotDate||'')+'"></label>'
+      +'<p class="hint">'+T('tireHint',{n:nf(dOut(TL.TIRE_ROT_KM)),u:dU()})+'</p><p class="form-err" id="ferr" role="alert"></p>'
+      +'<div class="sh-foot">'+(edit?'<button type="button" class="btn danger" id="delBtn">'+T('delete')+'</button><span class="sp"></span>':'')
+      +'<button type="button" class="btn" data-close>'+T('cancel')+'</button><button type="submit" class="btn primary">'+T('save')+'</button></div></form>','#t-date');
+    if(edit)armDelete($('#delBtn'),()=>{state.tire=Object.assign({},AC.core.TIRE_DEFAULT);commit();closeSheet();toast(T('tireDeleted'))});
+    $('#frm').addEventListener('submit',e=>{
+      e.preventDefault();
+      const date=sv('t-date'),odo=nv('t-odo'),life=nv('t-life'),rd=sv('t-rdate'),ro=nv('t-rodo');
+      if(!date&&!Number.isFinite(odo))return $('#ferr').textContent=T('errComp');
+      demoCleared();
+      state.tire={brandSize:sv('t-brand'),installDate:date||null,installOdo:Number.isFinite(odo)?dIn(odo):null,
+        lifeKm:life>0?dIn(life):null,rotDate:rd||null,rotOdo:Number.isFinite(ro)?dIn(ro):null,demo:false};
+      commit();closeSheet();toast(T('tireSaved'));
+    });
+  }
+  function openValue(){
+    sheetKind='value';const v=state.value||{},edit=!!(v.purchase!=null||v.current!=null);
+    openSheet(head(T(edit?'valueEdit':'valueAdd'))+'<form id="frm" novalidate>'
+      +'<label class="fld"><span>'+T('valuePurchase',{c:esc(S().cur)})+'</span><input id="val-p" type="number" inputmode="decimal" step="any" min="0" value="'+(v.purchase!=null?v.purchase:'')+'" placeholder="0"></label>'
+      +'<label class="fld"><span>'+T('valueCurrent',{c:esc(S().cur)})+'</span><input id="val-c" type="number" inputmode="decimal" step="any" min="0" value="'+(v.current!=null?v.current:'')+'" placeholder="0"></label>'
+      +'<p class="hint">'+T('valueHint')+'</p><p class="form-err" id="ferr" role="alert"></p>'
+      +'<div class="sh-foot">'+(edit?'<button type="button" class="btn danger" id="delBtn">'+T('delete')+'</button><span class="sp"></span>':'')
+      +'<button type="button" class="btn" data-close>'+T('cancel')+'</button><button type="submit" class="btn primary">'+T('save')+'</button></div></form>','#val-p');
+    if(edit)armDelete($('#delBtn'),()=>{state.value=Object.assign({},AC.core.VALUE_DEFAULT);commit();closeSheet();toast(T('valueDeleted'))});
+    $('#frm').addEventListener('submit',e=>{
+      e.preventDefault();
+      const p=nv('val-p'),c=nv('val-c');
+      if(!Number.isFinite(p)||p<=0)return $('#ferr').textContent=T('errPurchase');
+      if(!Number.isFinite(c)||c<0)return $('#ferr').textContent=T('errCurrent');
+      demoCleared();
+      state.value={purchase:p,current:c,demo:false};
+      commit();closeSheet();toast(T('valueSaved'));
+    });
+  }
+
   /* Reinicio usado por "Borrar todos los datos" y por "Empezar con mis datos". */
   function resetAll(message){
     state=store.wipe();
@@ -1662,6 +1785,7 @@
     'settings':openSettings,'edit-vehicle':()=>openVehicle(),
     'veh-add':addVehicle,'veh-del':openVehicleDelete,
     'comp-edit':key=>openComponent(key),'doc-key':key=>openDoc(null,{key}),
+    'tire-edit':openTire,'value-edit':openValue,
     'veh-view-toggle':()=>{const v=veh();if(!v.photoDataUrl)return;v.usePhoto=!v.usePhoto;commit();toast(T(v.usePhoto?'photoReady':'blueprintReady'))},
     'veh-cut-toggle':()=>toggleCutout(false),'cut-cancel':()=>cancelCutout(),
     'edit-entry':id=>{const e=state.entries.find(x=>x.id===id);if(e)openEntry(e.type==='fuel'?'fuel':e.type==='odo'?'odo':'exp',e)},
