@@ -266,6 +266,23 @@ window.AC = window.AC || {};
   let dbPromise=null,idbReady=false,idbFailed=false,initPromise=null;
   let writeChain=Promise.resolve(),memoryBackup=null,knownFileIds=[];
 
+  /* IndexedDB es la única fuente de verdad; `lastIDBData` es la copia en
+     memoria del último estado leído/guardado para la API síncrona. */
+  let lastIDBData=null;
+  const STORAGE_ERROR_MESSAGE='Error al guardar los datos en este dispositivo. Exporta un respaldo JSON por seguridad.';
+  let storageErrorHandler=null,lastStorageError=null,storageErrorActive=false;
+  function emitStorageError(err,origin){
+    if(storageErrorActive)return;
+    storageErrorActive=true;
+    lastStorageError={message:STORAGE_ERROR_MESSAGE,error:err||null,origin:origin||''};
+    try{if(typeof storageErrorHandler==='function')storageErrorHandler(lastStorageError)}catch(e){}
+    try{window.dispatchEvent(new CustomEvent('onStorageError',{detail:lastStorageError}))}
+    catch(e){
+      try{const ev=document.createEvent('CustomEvent');ev.initCustomEvent('onStorageError',false,false,lastStorageError);window.dispatchEvent(ev)}catch(e2){}
+    }
+  }
+  function clearStorageError(){storageErrorActive=false;lastStorageError=null;}
+
   function idbOpen(){
     if(dbPromise)return dbPromise;
     dbPromise=new Promise((resolve,reject)=>{
@@ -295,14 +312,18 @@ window.AC = window.AC || {};
   function idbGetAll(store){return idbOpen().then(db=>idbRequest(db,store,'readonly',os=>os.getAll()))}
   function idbPut(store,key,value){return idbOpen().then(db=>idbRequest(db,store,'readwrite',os=>key===undefined?os.put(value):os.put(value,key)))}
   function idbDelete(store,key){return idbOpen().then(db=>idbRequest(db,store,'readwrite',os=>os.delete(key)))}
+  /* En localStorage quedan solo preferencias ligeras y banderas de sesión;
+     el estado completo (incluidas fotos) se guarda en IndexedDB. */
   function localMirror(){
     const snap={};
     try{
-      const raw=localStorage.getItem(KEY);if(raw!==null)snap[KEY]=raw;
       const empty=localStorage.getItem(KEY+'-empty');if(empty!==null)snap[KEY+'-empty']=empty;
+      const langKey=(AC.i18n&&AC.i18n.KEY)||'autocare-lang';
+      const lang=localStorage.getItem(langKey);if(lang!==null)snap[langKey]=lang;
     }catch(e){}
     return snap;
   }
+  function pruneLocalState(){try{localStorage.removeItem(KEY)}catch(e){}}
   function restoreMirror(snap){
     try{
       [KEY,KEY+'-empty'].forEach(k=>{
@@ -333,11 +354,12 @@ window.AC = window.AC || {};
     ]);
   }
   function writeIDB(data){
-    writeChain=writeChain.then(()=>Promise.all([
+    const attempt=writeChain.then(()=>Promise.all([
       idbPut(STORE_STATE,STATE_KEY,{schemaVersion:SCHEMA_VERSION,app:'autocare',data:data,localStorage:localMirror(),updatedAt:new Date().toISOString()}),
       syncPhotoFiles(data)
-    ])).catch(()=>{idbFailed=true});
-    return writeChain;
+    ]));
+    writeChain=attempt.catch(()=>{});
+    return attempt.then(()=>{clearStorageError()},e=>{idbFailed=true;emitStorageError(e,'IndexedDB')});
   }
   function hydrate(data){
     if(!data||typeof data!=='object')return false;
@@ -353,16 +375,18 @@ window.AC = window.AC || {};
     if(initPromise)return initPromise;
     initPromise=idbOpen().then(()=>idbGet(STORE_STATE,STATE_KEY))
       .then(rec=>{
-        const snapshot=()=>JSON.parse(JSON.stringify(state));
-        let local=null;
-        try{const raw=localStorage.getItem(KEY);local=raw?JSON.parse(raw):null}catch(e){}
-        if(!rec){writeIDB(snapshot());return}
+        if(!rec){
+          /* Migración única: lo que hubiera en localStorage pasa a IndexedDB
+             y después se libera la clave pesada. */
+          writeIDB(JSON.parse(JSON.stringify(state)));
+          pruneLocalState();
+          return;
+        }
         const remote=(rec.schemaVersion&&rec.data)?rec.data:rec;
-        const remoteTs=Number(remote&&remote.updatedAt)||0,localTs=Number(local&&local.updatedAt)||0;
-        /* Gana el estado mas reciente; nunca se pierden registros al migrar. */
-        if(localTs>remoteTs)writeIDB(snapshot());
-        else if(remoteTs>localTs||!local)hydrate(remote);
-      }).catch(()=>{idbFailed=true});
+        lastIDBData=remote;
+        hydrate(remote);
+        pruneLocalState();
+      }).catch(e=>{idbFailed=true;emitStorageError(e,'IndexedDB (init)')});
     return initPromise;
   }
   function whenReady(){return initIDB()}
@@ -386,9 +410,11 @@ window.AC = window.AC || {};
   const cap=n=>{try{return window.claude&&window.claude.use?window.claude.use(n):Promise.resolve(null)}catch(e){return Promise.resolve(null)}};
 
   function load(){
-    /* Migracion automatica localStorage -> IndexedDB (sin perder registros). */
+    /* Migracion automatica localStorage -> IndexedDB (una sola vez). */
     initIDB();
     try{
+      /* Si IndexedDB ya respondió, su estado es la fuente de verdad. */
+      if(lastIDBData)return normalize(lastIDBData);
       /* Tras un reinicio no se guarda el estado vacío: sólo un marcador que impide
          que load() vuelva a generar el demo de fábrica. */
       if(localStorage.getItem(KEY+'-empty')==='1')return blank();
@@ -400,39 +426,21 @@ window.AC = window.AC || {};
   let state=load();
   let dbRef=null,saving=false,again=false,timer=null,retry=null,syncKind='local';
 
-  function persistState(){
-    try{
-      localStorage.removeItem(KEY+'-empty');
-      localStorage.setItem(KEY,JSON.stringify(state));
-      return true;
-    }catch(e){return false}
-  }
   function save(){
-    const snapshot=()=>JSON.parse(JSON.stringify(state));
-    /* Copia completa ANTES de cualquier recorte por cuota del espejo local. */
-    const full=snapshot();
+    const full=JSON.parse(JSON.stringify(state));
+    lastIDBData=full;
     try{
-      /* El marcador "vacío" sólo aplica al garaje de una sola tarjeta: con
-         varios vehículos, borrar el activo no debe descartar los demás. */
+      /* El marcador "vacío" es una bandera ligera; el estado completo nunca
+         se escribe en localStorage, aunque no quede espacio libre. */
       if(state&&state.vehicle&&state.vehicle.empty&&(state.vehicles||[]).length<=1){
-        localStorage.removeItem(KEY);
         localStorage.setItem(KEY+'-empty','1');
-        writeIDB(full);
-        return;
+      }else{
+        localStorage.removeItem(KEY+'-empty');
       }
-      if(!persistState()){
-        /* Cuota casi llena: las imagenes ya estan en IndexedDB (sin limite de
-           5 MB); en el espejo localStorage se conserva solo el recorte. */
-        (state.vehicles||[]).forEach(r=>{
-          const v=r&&r.vehicle;if(!v||(!v.photoOriginal&&!v.photoFallback))return;
-          v.photoOriginal=null;v.photoFallback=null;
-          if(v.photoView!=='cut'&&v.photoCutDataUrl)v.photoDataUrl=v.photoCutDataUrl;
-        });
-        persistState();
-      }
-    }catch(e){}
-    /* El estado completo (incluidas fotos y recortes) se guarda en IndexedDB. */
+    }catch(e){/* Bandera ligera: no es un fallo de persistencia. */}
+    /* El estado completo (incluidas fotos y recortes) va directo a IndexedDB. */
     writeIDB(full);
+    return !lastStorageError&&!idbFailed;
   }
 
   /* ---------- Reinicio absoluto ---------- */
@@ -695,6 +703,12 @@ window.AC = window.AC || {};
     /* Etapa 1: almacenamiento durable y sin limite de 5 MB */
     DB_NAME,SCHEMA_VERSION,whenReady,
     isIndexedDBReady:()=>idbReady&&!idbFailed,
+    /* Fallo real de persistencia: callback y evento `onStorageError`. */
+    STORAGE_ERROR_MESSAGE,
+    get onStorageError(){return storageErrorHandler},
+    set onStorageError(fn){storageErrorHandler=typeof fn==='function'?fn:null},
+    lastStorageError:()=>lastStorageError,
+    isStorageHealthy:()=>!lastStorageError&&!idbFailed,
     putFile,getFile,listFiles,deleteFile,
     garage:{list:garageList,select:selectVehicle,add:addVehicle,remove:removeVehicle,
       activeId:()=>state.activeId,count:()=>(state.vehicles||[]).length,label:vehicleLabel}

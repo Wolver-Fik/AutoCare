@@ -1372,6 +1372,22 @@
     clearTimeout(toastT);
     toastT=setTimeout(()=>{t.classList.remove('on');toastT=null},typeof ms==='number'?ms:2500);
   }
+  /* Fallo real de guardado: storage.js emite `onStorageError` cuando fallan
+     IndexedDB y el almacenamiento alternativo. El aviso es persistente. */
+  (function(){
+    const TEXT='Error al guardar los datos en este dispositivo. Exporta un respaldo JSON por seguridad.';
+    function showStorageError(ev){
+      let el=document.getElementById('storageErrorBanner');
+      if(!el){
+        el=document.createElement('div');el.id='storageErrorBanner';el.setAttribute('role','alert');
+        el.style.cssText='position:fixed;left:50%;top:8px;transform:translateX(-50%);max-width:min(92vw,680px);z-index:2147483647;background:#8b1e1e;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.35);font:600 14px/1.4 system-ui,sans-serif;text-align:center';
+        (document.body||document.documentElement).appendChild(el);
+      }
+      el.textContent=(ev&&ev.detail&&ev.detail.message)||TEXT;
+    }
+    window.addEventListener('onStorageError',showStorageError);
+    if(store&&store.lastStorageError&&store.lastStorageError())showStorageError({detail:store.lastStorageError()});
+  })();
   const cutToast=m=>toast(m,3000);
   /* Sin red: aviso de encuadre. Con red: el motivo técnico real, nunca el
      texto genérico de "sin conexión" para un fallo de RAM/codificación/modelo. */
@@ -1822,22 +1838,25 @@
   /* Última red de seguridad: nunca abandonar la página con el body bloqueado. */
   window.addEventListener('pagehide',()=>{unlockBodyScroll();hideProgress();killAIWorker()});
 
-  /* ---------- Arranque ---------- */
+  /* ---------- Arranque ----------
+     IndexedDB es la fuente de verdad: startApp() espera a la migración inicial
+     (solo si la base estaba vacía) antes de leer el estado. */
   AC.render=render;
   AC.generateBlueprintFromPhoto=generateBlueprintFromPhoto;
   document.addEventListener('ac:langchange',()=>{if(store.setSync)store.setSync(store.syncKind());render()});
-  /* La migracion a IndexedDB termina despues del primer render: se refresca
-     la vista sin reemplazar el objeto de estado que ya usa la interfaz. */
-  document.addEventListener('autocare:storage-ready',()=>{state=store.state;render()});
-  if(store.whenReady)store.whenReady().then(()=>{state=store.state;render()}).catch(()=>{});
-
-  I18N.apply();
-  const langSel=$('#langSel');
-  if(langSel){langSel.value=I18N.lang;langSel.addEventListener('change',e=>{I18N.set(e.target.value);e.target.value=I18N.lang})}
-  initTabs();
-  render();
-  initTilt();
-  store.connect(()=>{state=store.state;render()});
+  function startApp(){
+    state=store.state;
+    document.addEventListener('autocare:storage-ready',()=>{state=store.state;render()});
+    I18N.apply();
+    const langSel=$('#langSel');
+    if(langSel){langSel.value=I18N.lang;langSel.addEventListener('change',e=>{I18N.set(e.target.value);e.target.value=I18N.lang})}
+    initTabs();
+    render();
+    initTilt();
+    store.connect(()=>{state=store.state;render()});
+  }
+  if(store.whenReady)store.whenReady().then(startApp,startApp);
+  else startApp();
 
   /* ---------- Service Worker (PWA) ---------- */
   if('serviceWorker' in navigator){
