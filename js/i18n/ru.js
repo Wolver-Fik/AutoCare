@@ -2,6 +2,13 @@
 (function (AC) {
   'use strict';
   AC.i18n.register("ru", {
+    "install.button": "Установить приложение",
+    "install.guideTitle": "Установка на iPhone или iPad",
+    "install.step1": "Нажмите значок «Поделиться» на панели Safari",
+    "install.step2": "Выберите «На главный экран»",
+    "install.close": "Закрыть",
+    "install.buttonAria": "Установить приложение на этом устройстве",
+    "install.closeAria": "Закрыть руководство по установке",
     "appTitle": "Панель автомобиля",
     "appSubtitle": "Панель управления",
     "loading": "Загрузка",

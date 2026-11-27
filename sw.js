@@ -3,7 +3,7 @@
 
 /* Etapa 2: sube la version con cada cambio. activate solo purga CacheStorage;
    nunca borra IndexedDB (autocare_db) ni localStorage. */
-const CACHE = 'autocare-v1.5.0';
+const CACHE = 'autocare-v1.5.1';
 /* El recorte IA carga modulos y pesos desde estos CDNs. El service worker NO
    debe interceptarlos: un cache outage (o una respuesta HTML del offline
    fallback) rompe la carga de WASM/ONNX y deja el recorte en fallback. */
@@ -38,6 +38,7 @@ const CORE = [
   './js/i18n/ru.js',
   './js/i18n/ja.js',
   './js/storage.js',
+  './js/ios-install.js',
   './js/app.js',
   './js/bg-worker.js'
 ];
